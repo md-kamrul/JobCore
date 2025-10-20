@@ -5,7 +5,7 @@ import { AiFillProject } from "react-icons/ai";
 const Header = () => {
     return (
         <header
-            className="flex items-center justify-between px-8 py-4 bg-transparent"
+            className="flex items-center justify-between px-8 py-4 bg-transparent mb-6"
             style={{ borderBottom: "1px solid var(--color-border)" }}
         >
             {/* Logo Section */}
