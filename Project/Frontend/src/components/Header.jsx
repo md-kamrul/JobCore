@@ -29,17 +29,17 @@ const Header = () => {
                     </li>
                     <li>
                         <a href="#" className="text-white px-3 py-1 rounded">
-                            Job Search
+                            Job Agent
                         </a>
                     </li>
                     <li>
                         <a href="#" className="text-white px-3 py-1 rounded">
-                            Applications
+                            Resume Checker
                         </a>
                     </li>
                     <li>
                         <a href="#" className="text-white px-3 py-1 rounded">
-                            Interviews
+                            Mock Interviews
                         </a>
                     </li>
                 </ul>
@@ -47,9 +47,11 @@ const Header = () => {
 
             {/* Icons (Notification + User) */}
             <div className="flex items-center space-x-4">
-                <FaBell className="w-5 h-5 text-white hover:text-gray-200 transition" />
+                <FaBell className="w-5 h-5 text-white hover:text-gray-200 transition pointer" />
                 <div className="w-8 h-8 bg-gray-600 rounded-full flex items-center justify-center">
-                    <FaUserCircle className="w-5 h-5 text-white" />
+                    <a href="/profile" className="text-white px-3 py-1 rounded">
+                        <FaUserCircle className="w-5 h-5 text-white pointer" />
+                    </a>
                 </div>
             </div>
         </header>
