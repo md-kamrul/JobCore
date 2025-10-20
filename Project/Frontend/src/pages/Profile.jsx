@@ -60,18 +60,18 @@ const ProfileSection = () => {
                 {/* Activity Summary */}
                 <div className="bg-gray-800 p-6 rounded-2xl">
                     <h3 className="font-semibold mb-4">Activity Summary</h3>
-                    <div className="grid grid-cols-3 gap-4 text-center mb-6">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-center mb-6">
                         <div className="bg-[#1173d4a1] p-6 rounded-2xl">
-                            <p className="text-2xl font-bold text-blue-400">42</p>
-                            <p className="text-sm">Applications Sent</p>
+                            <p className="text-2xl font-bold text-blue-400">10</p>
+                            <p className="text-sm">Total Job Result</p>
                         </div>
                         <div className="bg-[#1173d4a1] p-6 rounded-2xl">
                             <p className="text-2xl font-bold text-blue-400">8</p>
-                            <p className="text-sm">Interviews Scheduled</p>
+                            <p className="text-sm">Applications Sent</p>
                         </div>
                         <div className="bg-[#1173d4a1] p-6 rounded-2xl">
                             <p className="text-2xl font-bold text-blue-400">2</p>
-                            <p className="text-sm">Offers Received</p>
+                            <p className="text-sm">Mock Interview</p>
                         </div>
                     </div>
 
