@@ -1,9 +1,10 @@
 import React from "react";
 
 const Footer = () => {
+    const currentYear = new Date().getFullYear();
     return (
         <footer className="text-center text-gray-500 text-sm py-6 border-t border-gray-700">
-            © 2024 JobCore. All rights reserved. ·{" "}
+            © {currentYear} JobCore. All rights reserved. ·{" "}
             <a href="#" className="hover:text-white">
                 Support
             </a>{" "}
