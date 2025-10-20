@@ -5,4 +5,5 @@ Before using this web tool, you need to install some dependences. To install thi
 ```
 npm install
 npm install tailwindcss @tailwindcss/vite
+npm install react-icons --save
 ```
