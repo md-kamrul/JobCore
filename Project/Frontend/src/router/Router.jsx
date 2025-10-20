@@ -7,6 +7,9 @@ import Dashboard from "../pages/Dashboard";
 import Login from "../pages/Login";
 import Signup from "../pages/Signup";
 import Profile from "../pages/Profile";
+import JobAgent from "../pages/JobAgent";
+import MockInterview from "../pages/MockInterview";
+import ResumeChecker from "../pages/ResumeChecker";
 
 export const router = createBrowserRouter([
   {
@@ -18,6 +21,9 @@ export const router = createBrowserRouter([
         { path: "/login", element: <Login></Login> },
         { path: "/signup", element: <Signup></Signup> },
         { path: "/profile", element: <Profile></Profile>},
+        { path: "/job-agent", element: <JobAgent></JobAgent>},
+        { path: "/mock-interview", element: <MockInterview></MockInterview>},
+        { path: "/resume-checker", element: <ResumeChecker></ResumeChecker>},
     ],
   },
 ]);
