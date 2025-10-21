@@ -5,7 +5,7 @@ export default function JobCoreDashboard() {
   const features = [
     {
       icon: <FaFileAlt className="w-8 h-8" />,
-      title: "Resume Builder",
+      title: "Resume Checker",
       description: "Create and manage your professional resumes to stand out to employers.",
       color: "bg-blue-500"
     },
@@ -29,7 +29,7 @@ export default function JobCoreDashboard() {
     },
     {
       icon: <FaComments className="w-8 h-8" />,
-      title: "Interview Coach",
+      title: "AI Mock Interview",
       description: "Practice common interview questions and get AI-powered feedback.",
       color: "bg-blue-500"
     },
@@ -46,7 +46,7 @@ export default function JobCoreDashboard() {
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-6 py-12">
         <div className="text-center mb-12">
-          <h1 className="text-4xl font-bold mb-3">Welcome back, John!</h1>
+          <h1 className="text-4xl font-bold mb-3">Welcome back, Farhan!</h1>
           <p className="text-gray-400 text-lg">What would you like to do today?</p>
         </div>
 

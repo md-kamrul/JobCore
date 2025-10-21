@@ -12,8 +12,8 @@ const ProfileSection = () => {
                         <div className="w-24 h-24 bg-gray-600 rounded-full mx-auto mb-4 flex items-center justify-center">
                             <FaUser className="text-3xl text-gray-300" />
                         </div>
-                        <h2 className="text-lg font-semibold">John Doe</h2>
-                        <p className="text-gray-400 text-sm mb-2">john.doe@email.com</p>
+                        <h2 className="text-lg font-semibold">Farhan Ishraque</h2>
+                        <p className="text-gray-400 text-sm mb-2">farhan.ishraque@email.com</p>
                         <p className="text-gray-400 text-sm">
                             Passionate product designer with a knack for creating intuitive and
                             delightful user experiences.
