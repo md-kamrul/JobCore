@@ -33,6 +33,29 @@ export default function LoginPageDesign() {
           </button>
         </form>
 
+        <div className="text-right mt-3">
+          <a href="#" className="text-sm text-blue-400 hover:underline">
+            Forgot Password?
+          </a>
+        </div>
+
+        <div className="flex items-center my-6">
+          <hr className="flex-grow border-gray-600" />
+          <span className="mx-2 text-gray-400">or</span>
+          <hr className="flex-grow border-gray-600" />
+        </div>
+
+        {/* Google Login Button */}
+        <button className="w-full flex items-center justify-center gap-2 bg-[#0d1117] border border-gray-600 py-2 rounded-lg hover:bg-gray-800 transition">
+          <i className="fa fa-google"></i> Continue with Google
+        </button>
+
+        <p className="text-center text-sm text-gray-400 mt-6">
+          Don’t have an account?{" "}
+          <a href="#" className="text-blue-400 hover:underline">
+            Sign Up
+          </a>
+        </p>
       </div>
     </div>
   );
