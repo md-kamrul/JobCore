@@ -1,9 +1,22 @@
 import React, { useState } from "react";
 import { FaUserCircle, FaBell, FaBars, FaTimes } from "react-icons/fa";
 import { AiFillProject } from "react-icons/ai";
+import { NavLink } from "react-router-dom"; // Import from react-router-dom
 
 const Header = () => {
     const [isOpen, setIsOpen] = useState(false);
+
+    // Function to generate class names for NavLink (active and hover states)
+    const getNavLinkClass = ({ isActive }) =>
+        `text-white px-3 py-1 rounded transition ${
+            isActive ? "bg-blue-500" : "hover:text-gray-300"
+        }`;
+
+    // For mobile: separate class to handle block-level styling
+    const getMobileNavLinkClass = ({ isActive }) =>
+        `block w-full text-white py-2 px-2 rounded transition ${
+            isActive ? "bg-[#1e2938]" : "hover:bg-gray-700"
+        }`;
 
     return (
         <header
@@ -11,40 +24,40 @@ const Header = () => {
             style={{ borderBottom: "1px solid var(--color-border)" }}
         >
             {/* Logo Section */}
-            <a href="/" className="text-white px-3 py-1 rounded hover:text-gray-300">
+            <NavLink to="/" className="text-white px-3 py-1 rounded hover:text-gray-300">
                 <div className="flex items-center space-x-2">
                     <AiFillProject className="w-6 h-6 text-[#1173d4]" />
                     <span className="font-semibold text-lg text-white">JobCore</span>
                 </div>
-            </a>
+            </NavLink>
 
             {/* Desktop Navigation */}
             <nav className="hidden md:block" aria-label="Main navigation">
                 <ul className="flex items-center space-x-4">
                     <li>
-                        <a href="/" className="text-white px-3 py-1 rounded hover:text-gray-300">
+                        <NavLink to="/" className={getNavLinkClass}>
                             Home
-                        </a>
+                        </NavLink>
                     </li>
                     <li>
-                        <a href="/dashboard" className="text-white px-3 py-1 rounded hover:text-gray-300">
+                        <NavLink to="/dashboard" className={getNavLinkClass}>
                             Dashboard
-                        </a>
+                        </NavLink>
                     </li>
                     <li>
-                        <a href="/job-agent" className="text-white px-3 py-1 rounded hover:text-gray-300">
+                        <NavLink to="/job-agent" className={getNavLinkClass}>
                             Job Agent
-                        </a>
+                        </NavLink>
                     </li>
                     <li>
-                        <a href="/resume-checker" className="text-white px-3 py-1 rounded hover:text-gray-300">
+                        <NavLink to="/resume-checker" className={getNavLinkClass}>
                             Resume Checker
-                        </a>
+                        </NavLink>
                     </li>
                     <li>
-                        <a href="/mock-interview" className="text-white px-3 py-1 rounded hover:text-gray-300">
+                        <NavLink to="/mock-interview" className={getNavLinkClass}>
                             Mock Interviews
-                        </a>
+                        </NavLink>
                     </li>
                 </ul>
             </nav>
@@ -74,49 +87,49 @@ const Header = () => {
                 <div className="absolute top-full left-0 w-full bg-gray-800 border-t border-gray-700 md:hidden z-50">
                     <ul className="flex flex-col items-start p-4 space-y-3">
                         <li>
-                            <a
-                                href="/"
-                                className="block w-full text-white py-2 px-2 rounded hover:bg-gray-700"
+                            <NavLink
+                                to="/"
+                                className={getMobileNavLinkClass}
                                 onClick={() => setIsOpen(false)}
                             >
                                 Home
-                            </a>
+                            </NavLink>
                         </li>
                         <li>
-                            <a
-                                href="/dashboard"
-                                className="block w-full text-white py-2 px-2 rounded hover:bg-gray-700"
+                            <NavLink
+                                to="/dashboard"
+                                className={getMobileNavLinkClass}
                                 onClick={() => setIsOpen(false)}
                             >
                                 Dashboard
-                            </a>
+                            </NavLink>
                         </li>
                         <li>
-                            <a
-                                href="#"
-                                className="block w-full text-white py-2 px-2 rounded hover:bg-gray-700"
+                            <NavLink
+                                to="/job-agent"
+                                className={getMobileNavLinkClass}
                                 onClick={() => setIsOpen(false)}
                             >
                                 Job Agent
-                            </a>
+                            </NavLink>
                         </li>
                         <li>
-                            <a
-                                href="#"
-                                className="block w-full text-white py-2 px-2 rounded hover:bg-gray-700"
+                            <NavLink
+                                to="/resume-checker"
+                                className={getMobileNavLinkClass}
                                 onClick={() => setIsOpen(false)}
                             >
                                 Resume Checker
-                            </a>
+                            </NavLink>
                         </li>
                         <li>
-                            <a
-                                href="#"
-                                className="block w-full text-white py-2 px-2 rounded hover:bg-gray-700"
+                            <NavLink
+                                to="/mock-interview"
+                                className={getMobileNavLinkClass}
                                 onClick={() => setIsOpen(false)}
                             >
                                 Mock Interviews
-                            </a>
+                            </NavLink>
                         </li>
                     </ul>
                 </div>
