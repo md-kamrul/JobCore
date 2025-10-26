@@ -11,12 +11,12 @@ const Header = () => {
             style={{ borderBottom: "1px solid var(--color-border)" }}
         >
             {/* Logo Section */}
-            <div className="flex items-center space-x-2">
-                <a href="/" className="text-white px-3 py-1 rounded hover:text-gray-300">
+            <a href="/" className="text-white px-3 py-1 rounded hover:text-gray-300">
+                <div className="flex items-center space-x-2">
                     <AiFillProject className="w-6 h-6 text-[#1173d4]" />
                     <span className="font-semibold text-lg text-white">JobCore</span>
-                </a>
-            </div>
+                </div>
+            </a>
 
             {/* Desktop Navigation */}
             <nav className="hidden md:block" aria-label="Main navigation">
