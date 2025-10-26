@@ -12,8 +12,10 @@ const Header = () => {
         >
             {/* Logo Section */}
             <div className="flex items-center space-x-2">
-                <AiFillProject className="w-6 h-6 text-[#1173d4]" />
-                <span className="font-semibold text-lg text-white">JobCore</span>
+                <a href="/" className="text-white px-3 py-1 rounded hover:text-gray-300">
+                    <AiFillProject className="w-6 h-6 text-[#1173d4]" />
+                    <span className="font-semibold text-lg text-white">JobCore</span>
+                </a>
             </div>
 
             {/* Desktop Navigation */}
