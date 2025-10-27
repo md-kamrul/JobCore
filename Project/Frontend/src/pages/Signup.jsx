@@ -53,6 +53,13 @@ export default function Signup() {
         <button className="w-full flex items-center justify-center gap-2 bg-[#0d1117] border border-gray-600 py-2 rounded-lg hover:bg-gray-800 transition">
           <i className="fa fa-google"></i> Continue with Google
         </button>
+
+        <p className="text-center text-sm text-gray-400 mt-6">
+          Have an account?{" "}
+          <a href="/login" className="text-blue-400 hover:underline">
+            Log In
+          </a>
+        </p>
       </div>
     </div>
   );
