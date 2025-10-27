@@ -52,16 +52,6 @@ const JobAgent = () => {
 
   return (
     <div className="min-h-screen flex flex-col bg-[#0d1117] text-white">
-      {/* Header */}
-      <header className="bg-[#161b22] p-4 shadow-md flex items-center justify-between">
-        <h1 className="text-xl font-bold">JobCore AI</h1>
-        <nav className="space-x-4 text-gray-400">
-          <a href="#" className="hover:text-white">Dashboard</a>
-          <a href="#" className="hover:text-white">Job Search</a>
-          <a href="#" className="hover:text-white">Applications</a>
-        </nav>
-      </header>
-
       {/* Chat Section */}
       <main className="flex-1 overflow-y-auto p-6 space-y-4">
         {messages.map((msg, index) => (
