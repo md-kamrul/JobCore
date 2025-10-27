@@ -42,6 +42,17 @@ export default function Signup() {
             Sign Up
           </button>
         </form>
+
+        <div className="flex items-center my-6">
+          <hr className="flex-grow border-gray-600" />
+          <span className="mx-2 text-gray-400">or</span>
+          <hr className="flex-grow border-gray-600" />
+        </div>
+
+        {/* Google Login Button */}
+        <button className="w-full flex items-center justify-center gap-2 bg-[#0d1117] border border-gray-600 py-2 rounded-lg hover:bg-gray-800 transition">
+          <i className="fa fa-google"></i> Continue with Google
+        </button>
       </div>
     </div>
   );
