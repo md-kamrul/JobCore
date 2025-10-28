@@ -1,4 +1,59 @@
+import { useContext, useState } from "react";
+import { AuthContext } from "../provider/AuthProvider";
+import { useNavigate } from "react-router-dom";
+
 export default function Signup() {
+
+      const { createUser } = useContext(AuthContext);
+  const navigate = useNavigate();
+    const [registerError, setRegisterError] = useState("");
+
+    const handleRegister = (e) => {
+        e.preventDefault();
+        const form = new FormData(e.currentTarget);
+        const email = form.get("email");
+        const password = form.get("password");
+        const confirm_password = form.get("confirm-password");
+
+        if (password.length < 6) {
+            setRegisterError("Password must be at least 6 character...");
+            return;
+        }
+
+        if (!(/[a-z]/.test(password))) {
+            setRegisterError("Password must have an Uppercase letter...");
+            return;
+        }
+
+        if (!(/[A-Z]/.test(password))) {
+            setRegisterError("Password must have an Uppercase letter...");
+            return;
+        }
+
+        if (password !== confirm_password) {
+            setRegisterError("Password is not matching with Confirm Password...");
+            return;
+        }
+
+        setRegisterError("");
+
+        // creating user
+        createUser(email, password)
+            .then(result => {
+                navigate(
+                    location?.state ?
+                        location.state
+                        :
+                        "/"
+                )
+            })
+            .catch(error => {
+                if (error.message.indexOf("(auth/email-already-in-use).")) {
+                    setRegisterError("This email already have an account...");
+                }
+            })
+    }
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-[#0d1117] text-white">
       <div className="w-full max-w-md bg-[#161b22] p-8 rounded-2xl shadow-lg">
