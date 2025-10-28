@@ -5,7 +5,7 @@ import Footer from '../components/Footer';
 const Main = () => {
 
     const location = useLocation();
-    console.log(location);
+    // console.log(location);
 
     return (
         <div className="w-[80%] mx-auto text-white">
