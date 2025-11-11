@@ -1,0 +1,11 @@
+# Job Search Agent Requirements
+# Install with: pip install -r requirements_job_agent.txt
+
+langgraph>=0.0.20
+langchain>=0.1.0
+langchain-openai>=0.0.5
+langchain-community>=0.0.20
+langchain-core>=0.1.23
+python-dotenv>=1.0.0
+requests>=2.31.0
+ddgs>=9.0.0
