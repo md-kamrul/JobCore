@@ -1,156 +1,215 @@
-from dotenv import load_dotenv
-load_dotenv()
-import base64
 import os
-import io
-from PIL import Image 
-import pdf2image
-import google.generativeai as genai
 import sys
+from pathlib import Path
+from dotenv import load_dotenv
+import PyPDF2
+from openai import OpenAI
 
-genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+# Load Environment Variables from .env.local explicitly
+env_path = Path(__file__).parent / ".env.local"
+print(f"Looking for .env.local at: {env_path}")
+print(f"File exists: {env_path.exists()}")
 
-def get_gemini_response(input_text, pdf_content, prompt):
-    model = genai.GenerativeModel('gemini-pro-vision')
-    response = model.generate_content([input_text, pdf_content[0], prompt])
-    return response.text
+load_dotenv(dotenv_path=env_path)
 
-def input_pdf_setup(pdf_path):
-    """Convert PDF to image and prepare for Gemini API"""
-    try:
-        # Convert the PDF to image
-        images = pdf2image.convert_from_path(pdf_path)
-        first_page = images[0]
+API_KEY = os.getenv("OPENAI_API_KEY")
+if not API_KEY:
+    print("Missing OPENAI_API_KEY in .env.local. Exiting.")
+    print(f"Current directory: {os.getcwd()}")
+    print(f"Script directory: {Path(__file__).parent}")
+    sys.exit(1)
 
-        # Convert to bytes
-        img_byte_arr = io.BytesIO()
-        first_page.save(img_byte_arr, format='JPEG')
-        img_byte_arr = img_byte_arr.getvalue()
+print("✓ API Key loaded successfully!")
 
-        pdf_parts = [
-            {
-                "mime_type": "image/jpeg",
-                "data": base64.b64encode(img_byte_arr).decode()  # encode to base64
-            }
-        ]
-        return pdf_parts
-    except Exception as e:
-        print(f"Error processing PDF: {str(e)}")
-        return None
+# Initialize OpenAI client
+client = OpenAI(api_key=API_KEY)
 
-def validate_pdf_path(pdf_path):
-    """Validate if the PDF path exists and is accessible"""
-    if not pdf_path.strip():
-        return False
-    if not os.path.exists(pdf_path):
-        return False
-    if not pdf_path.lower().endswith('.pdf'):
-        return False
-    return True
+# ---------------- PDF Extraction ----------------
+def extract_pdf_text(pdf_path):
+    reader = PyPDF2.PdfReader(pdf_path)
+    text_parts = []
+    for p in reader.pages:
+        t = p.extract_text()
+        if t:
+            text_parts.append(t)
+    return "\n".join(text_parts)
 
-def get_pdf_path():
-    """Get and validate PDF path from user"""
-    while True:
-        pdf_path = input("\nEnter the full path to your resume (PDF): ").strip()
-        
-        # Allow user to exit
-        if pdf_path.lower() in ['q', 'quit', 'exit']:
-            return None
-            
-        # Convert relative path to absolute path
-        pdf_path = os.path.abspath(pdf_path)
-        
-        if validate_pdf_path(pdf_path):
-            return pdf_path
-        else:
-            print("\nError: Invalid PDF file path. Please ensure:")
-            print("1. The file exists")
-            print("2. The path is correct")
-            print("3. The file is a PDF")
-            print("4. Type 'q' to quit")
+# ---------------- Prompt Templates ----------------
+PROMPT_TEMPLATE_SUMMARY = """
+Hey. Act like a skilled and very experienced ATS (Applicant Tracking System)
+with a deep understanding of software engineering, data science, data analysis and big data engineering.
+Evaluate the resume against the given job description. Consider the job market is competitive and provide
+professional suggestions to improve the resume. Highlight strengths and weaknesses.
+Output should be a single JSON-like string with keys: "JD Match", "MissingKeywords", "Profile Summary".
 
-def get_job_description():
-    """Get job description from user with better handling"""
-    print("\nEnter the job description (press Enter twice when finished):")
+resume:
+{text}
+
+description:
+{jd}
+"""
+
+PROMPT_TEMPLATE_PERCENT = """
+You are an ATS scanner with deep knowledge of matching resumes to job descriptions.
+Compare the resume to the job description and return:
+1) A percentage match (as "JD Match": "xx%")
+2) A list of missing/high-value keywords ("MissingKeywords": [...])
+3) Final short thoughts ("Profile Summary": "...")
+
+Resume:
+{text}
+
+Job description:
+{jd}
+"""
+
+# ---------------- Input Handlers ----------------
+def ask_job_description():
+    """Get job description from user"""
+    print("\n" + "="*50)
+    print("Enter the job description (press Enter twice to finish):")
+    print("="*50)
     lines = []
+    empty_count = 0
     while True:
-        line = input()
-        if line == "":
-            if lines and lines[-1] == "":  # Two consecutive empty lines
-                break
-        lines.append(line)
-    return "\n".join(lines[:-1])  # Remove the last empty line
+        try:
+            line = input()
+            if line == "":
+                empty_count += 1
+                if empty_count >= 2:
+                    break
+            else:
+                empty_count = 0
+            lines.append(line)
+        except EOFError:
+            break
+    
+    # Remove trailing empty lines
+    while lines and lines[-1] == "":
+        lines.pop()
+    
+    return "\n".join(lines).strip()
 
+def ask_pdf_path():
+    """Get PDF path from user"""
+    while True:
+        print("\nEnter path to your resume PDF file")
+        print("(or type 'q' to quit): ", end="")
+        p = input().strip()
+        
+        if p.lower() in ("q", "quit", "exit"):
+            return None
+        
+        p = os.path.abspath(p)
+        
+        if os.path.exists(p) and p.lower().endswith(".pdf"):
+            return p
+        else:
+            print(f"❌ Error: File not found or not a PDF")
+            print(f"   Checked path: {p}")
+
+# ---------------- OpenAI Call ----------------
+def call_openai(prompt_text):
+    """Call OpenAI API to get resume analysis"""
+    try:
+        print("\n⏳ Processing... (this may take a few seconds)")
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are an expert ATS (Applicant Tracking System) analyzer with deep HR knowledge."
+                },
+                {
+                    "role": "user",
+                    "content": prompt_text
+                }
+            ],
+            temperature=0.7,
+            max_tokens=1024
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"❌ API error: {str(e)}"
+
+# ---------------- Main Logic ----------------
 def main():
-    print("\n=== ATS Resume Expert ===\n")
+    print("\n")
+    print("=" * 60)
+    print("     🎯 ATS RESUME EXPERT (OpenAI GPT VERSION)")
+    print("=" * 60)
     
     # Get job description
-    job_description = get_job_description()
-    if not job_description.strip():
-        print("Job description cannot be empty. Exiting...")
+    job_description = ask_job_description()
+    if not job_description:
+        print("\n❌ Job description is required. Exiting.")
         return
 
     # Get PDF path
-    pdf_path = get_pdf_path()
+    pdf_path = ask_pdf_path()
     if not pdf_path:
-        print("\nExiting program...")
+        print("\n❌ No PDF provided. Exiting.")
         return
 
-    # Process PDF
-    pdf_content = input_pdf_setup(pdf_path)
-    if not pdf_content:
-        print("Failed to process PDF. Exiting...")
+    # Extract resume text
+    print(f"\n📄 Reading resume from: {pdf_path}")
+    try:
+        resume_text = extract_pdf_text(pdf_path)
+    except Exception as e:
+        print(f"❌ Failed to read PDF: {str(e)}")
+        return
+    
+    if not resume_text.strip():
+        print("❌ No text extracted from PDF. Please check the file.")
         return
 
+    print("✅ Resume loaded successfully!")
+
+    # Main menu loop
     while True:
-        print("\nChoose an option:")
-        print("1. Tell Me About the Resume")
-        print("2. Percentage Match")
-        print("3. Exit")
+        print("\n" + "=" * 60)
+        print("MENU - Choose an option:")
+        print("=" * 60)
+        print("1️⃣  Tell Me About the Resume")
+        print("2️⃣  Percentage Match + Missing Keywords")
+        print("3️⃣  Exit")
+        print("=" * 60)
         
-        choice = input("\nEnter your choice (1-3): ").strip()
+        choice = input("Enter your choice (1-3): ").strip()
+        
+        if choice == "1":
+            prompt = PROMPT_TEMPLATE_SUMMARY.format(text=resume_text, jd=job_description)
+            output = call_openai(prompt)
+            print("\n" + "=" * 60)
+            print("📋 RESUME ANALYSIS")
+            print("=" * 60)
+            print(output)
+            print("=" * 60)
+        
+        elif choice == "2":
+            prompt = PROMPT_TEMPLATE_PERCENT.format(text=resume_text, jd=job_description)
+            output = call_openai(prompt)
+            print("\n" + "=" * 60)
+            print("📊 MATCH ANALYSIS")
+            print("=" * 60)
+            print(output)
+            print("=" * 60)
+        
+        elif choice == "3":
+            print("\n👋 Thank you for using ATS Resume Expert!")
+            print("=" * 60)
+            break
+        
+        else:
+            print("\n❌ Invalid option. Please select 1, 2, or 3.")
 
-        input_prompt1 = """
-        You are an experienced Technical Human Resource Manager,your task is to review the provided resume against the job description. 
-        Please share your professional evaluation on whether the candidate's profile aligns with the role. 
-        Highlight the strengths and weaknesses of the applicant in relation to the specified job requirements.
-        """
-
-        input_prompt3 = """
-        You are an skilled ATS (Applicant Tracking System) scanner with a deep understanding of data science and ATS functionality, 
-        your task is to evaluate the resume against the provided job description. give me the percentage of match if the resume matches
-        the job description. First the output should come as percentage and then keywords missing and last final thoughts.
-        """
-
-        try:
-            if choice == "1":
-                response = get_gemini_response(input_prompt1, pdf_content, job_description)
-                print("\nResponse:")
-                print("-" * 50)
-                print(response)
-                print("-" * 50)
-            
-            elif choice == "2":
-                response = get_gemini_response(input_prompt3, pdf_content, job_description)
-                print("\nResponse:")
-                print("-" * 50)
-                print(response)
-                print("-" * 50)
-            
-            elif choice == "3":
-                print("\nThank you for using ATS Resume Expert!")
-                break
-            
-            else:
-                print("\nInvalid choice. Please try again.")
-
-        except Exception as e:
-            print(f"\nAn error occurred: {str(e)}")
-
+# ---------------- Run Program ----------------
 if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        print("\n\nProgram terminated by user.")
+        print("\n\n⚠️  Program interrupted by user. Exiting.")
         sys.exit(0)
-
+    except Exception as e:
+        print(f"\n❌ An unexpected error occurred: {str(e)}")
+        sys.exit(1)
