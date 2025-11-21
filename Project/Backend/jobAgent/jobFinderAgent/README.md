@@ -63,14 +63,35 @@ venv/bin/python3 app.py
 
 ## Usage
 
+### Option 1: Terminal CLI (Standalone)
+
 1. Run the application: `python app.py`
 2. Choose "1" to search for jobs
 3. Describe what job you're looking for in natural language
-4. (Optional) Provide your LinkedIn profile URL when prompted
-5. Wait 30-60 seconds while the AI agents process your request
-6. View formatted results with job recommendations and LinkedIn links
-7. Optionally save results to a markdown file
-8. Choose "2" for help or "3" to exit
+4. Wait 30-60 seconds while the AI agents process your request
+5. View formatted results with job recommendations
+6. Choose "2" for help or "3" to exit
+
+### Option 2: Web API + Frontend Integration
+
+1. Start the backend API server:
+   ```bash
+   python api.py
+   # OR use the startup script
+   ./start_api.sh
+   ```
+
+2. Start the React frontend:
+   ```bash
+   cd ../../Frontend
+   npm run dev
+   ```
+
+3. Open the frontend in your browser and navigate to Job Agent page
+4. Type your job search query in the chatbox
+5. View results in real-time
+
+See [API_INTEGRATION.md](./API_INTEGRATION.md) for detailed API documentation.
 
 ### Example Queries
 

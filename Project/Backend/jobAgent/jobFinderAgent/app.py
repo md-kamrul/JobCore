@@ -36,8 +36,7 @@ def print_help():
     print("""
 1. Choose 'Search for jobs' from the menu
 2. Describe what job you're looking for in natural language
-3. Optionally provide your LinkedIn profile URL
-4. Get 8-10 relevant job recommendations with LinkedIn links
+3. Get 8-10 relevant job recommendations instantly
 
 📝 EXAMPLE QUERIES:
 - "Find me remote Python developer jobs"
@@ -45,13 +44,14 @@ def print_help():
 - "Entry level frontend jobs with React"
 - "Machine learning engineer roles at startups"
 - "Full-stack developer positions with TypeScript"
+- "Backend developer with Node.js and MongoDB"
 
 ✨ FEATURES:
-- AI understands natural language
-- Generates relevant job recommendations
-- Provides LinkedIn search URLs
+- AI understands natural language queries
+- Generates relevant job recommendations from LinkedIn
 - Shows company names, locations, and job details
-- Optional LinkedIn profile analysis
+- Displays results directly in terminal
+- Fast and simple - no configuration needed
 """)
     print("="*70 + "\n")
 
@@ -70,24 +70,18 @@ async def search_jobs_interactive():
         print("\n❌ Error: Please enter a job search query.\n")
         return
     
-    # Get optional LinkedIn profile
-    print("\n📋 LinkedIn Profile (optional - press Enter to skip):")
-    linkedin_url = input("LinkedIn URL: ").strip()
-    if not linkedin_url:
-        linkedin_url = None
-    
     print("\n" + "="*70)
-    print("🔄 Searching for jobs... This may take 30-60 seconds.")
+    print("🔄 Searching LinkedIn for jobs... This may take 30-60 seconds.")
     print("="*70)
     print("""
 1. Understanding your requirements...
 2. Generating optimized search criteria...
 3. Creating relevant job recommendations...
-4. Formatting results with LinkedIn links...
+4. Formatting results...
 """)
     
     try:
-        result = await run_job_search(None, user_query, linkedin_url)
+        result = await run_job_search(None, user_query, None)
         
         # Display results
         print("\n" + "="*70)
@@ -95,19 +89,6 @@ async def search_jobs_interactive():
         print("="*70 + "\n")
         print(result)
         print("\n" + "="*70 + "\n")
-        
-        # Ask if user wants to save results
-        save = input("Would you like to save these results to a file? (y/n): ").strip().lower()
-        if save == 'y':
-            filename = input("Enter filename (default: job_results.md): ").strip()
-            if not filename:
-                filename = "job_results.md"
-            if not filename.endswith('.md'):
-                filename += '.md'
-            
-            with open(filename, 'w') as f:
-                f.write(result)
-            print(f"\n✅ Results saved to {filename}\n")
     
     except Exception as e:
         logger.error(f"Error searching for jobs: {str(e)}", exc_info=True)

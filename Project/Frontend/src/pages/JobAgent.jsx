@@ -7,47 +7,74 @@ const JobAgent = () => {
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
 
-  const handleSend = (e) => {
+  const handleSend = async (e) => {
     e.preventDefault();
     if (!input.trim()) return;
 
     const userMessage = { sender: "user", text: input };
+    const userQuery = input;
     setMessages((prev) => [...prev, userMessage]);
     setInput("");
     setIsTyping(true);
 
-    // Simulate multi-step AI response
-    setTimeout(() => {
-      setMessages((prev) => [
-        ...prev,
-        { sender: "ai", text: `Sure! Let me search for "${input}" jobs near you... 🔍` },
-      ]);
-    }, 1000);
+    // Show searching message
+    setMessages((prev) => [
+      ...prev,
+      { sender: "ai", text: `🔍 Searching LinkedIn for "${userQuery}"...\n\nThis may take 30-60 seconds as I:\n1. Understand your requirements\n2. Generate search criteria\n3. Find relevant jobs\n4. Format results` },
+    ]);
 
-    setTimeout(() => {
+    try {
+      // Call the backend API
+      const response = await fetch('http://localhost:5000/api/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ message: userQuery }),
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        // Remove the searching message
+        setMessages((prev) => prev.slice(0, -1));
+        
+        // Add the results
+        setMessages((prev) => [
+          ...prev,
+          {
+            sender: "ai",
+            text: data.message,
+          },
+        ]);
+      } else {
+        // Remove the searching message
+        setMessages((prev) => prev.slice(0, -1));
+        
+        setMessages((prev) => [
+          ...prev,
+          {
+            sender: "ai",
+            text: `❌ Error: ${data.message || "Something went wrong. Please try again."}`,
+          },
+        ]);
+      }
+    } catch (error) {
+      console.error('Error calling API:', error);
+      
+      // Remove the searching message
+      setMessages((prev) => prev.slice(0, -1));
+      
       setMessages((prev) => [
         ...prev,
         {
           sender: "ai",
-          text:
-            "Here are a few matches I found:\n" +
-            "• Product Designer – Google (San Francisco)\n" +
-            "• UX/UI Designer – Airbnb (Remote)\n" +
-            "• Visual Designer – Meta (Menlo Park)",
+          text: "❌ Unable to connect to the job search service. Please make sure the backend server is running (python api.py) and try again.",
         },
       ]);
-    }, 2500);
-
-    setTimeout(() => {
-      setMessages((prev) => [
-        ...prev,
-        {
-          sender: "ai",
-          text: "Would you like me to filter by salary, experience level, or company?",
-        },
-      ]);
+    } finally {
       setIsTyping(false);
-    }, 4000);
+    }
   };
 
   return (
@@ -62,7 +89,7 @@ const JobAgent = () => {
             }`}
           >
             <div
-              className={`max-w-md whitespace-pre-line p-3 rounded-2xl ${
+              className={`max-w-[70%] whitespace-pre-line p-3 rounded-2xl ${
                 msg.sender === "user"
                   ? "bg-blue-600 text-white rounded-br-none"
                   : "bg-[#161b22] text-gray-200 rounded-bl-none"
