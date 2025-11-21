@@ -9,19 +9,13 @@ const JobAgent = () => {
 
   const handleSend = async (e) => {
     e.preventDefault();
-    if (!input.trim()) return;
+    if (!input.trim() || isTyping) return;
 
     const userMessage = { sender: "user", text: input };
     const userQuery = input;
     setMessages((prev) => [...prev, userMessage]);
     setInput("");
     setIsTyping(true);
-
-    // Show searching message
-    setMessages((prev) => [
-      ...prev,
-      { sender: "ai", text: `🔍 Searching LinkedIn for "${userQuery}"...\n\nThis may take 30-60 seconds as I:\n1. Understand your requirements\n2. Generate search criteria\n3. Find relevant jobs\n4. Format results` },
-    ]);
 
     try {
       // Call the backend API
@@ -36,21 +30,33 @@ const JobAgent = () => {
       const data = await response.json();
 
       if (data.success) {
-        // Remove the searching message
-        setMessages((prev) => prev.slice(0, -1));
-        
-        // Add the results
-        setMessages((prev) => [
-          ...prev,
-          {
-            sender: "ai",
-            text: data.message,
-          },
-        ]);
+        // Check if it's a job search result or conversational response
+        if (data.is_search) {
+          // Show searching progress for job searches
+          setMessages((prev) => [
+            ...prev,
+            { sender: "ai", text: `🔍 Searching LinkedIn for "${userQuery}"...\n\nThis may take 30-60 seconds as I:\n1. Understand your requirements\n2. Generate search criteria\n3. Find relevant jobs\n4. Format results` },
+          ]);
+          
+          // Wait a moment to show the progress message
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          
+          // Remove the searching message and add results
+          setMessages((prev) => {
+            const newMessages = prev.slice(0, -1);
+            return [...newMessages, { sender: "ai", text: data.message }];
+          });
+        } else {
+          // Add conversational response directly
+          setMessages((prev) => [
+            ...prev,
+            {
+              sender: "ai",
+              text: data.message,
+            },
+          ]);
+        }
       } else {
-        // Remove the searching message
-        setMessages((prev) => prev.slice(0, -1));
-        
         setMessages((prev) => [
           ...prev,
           {
@@ -62,14 +68,11 @@ const JobAgent = () => {
     } catch (error) {
       console.error('Error calling API:', error);
       
-      // Remove the searching message
-      setMessages((prev) => prev.slice(0, -1));
-      
       setMessages((prev) => [
         ...prev,
         {
           sender: "ai",
-          text: "❌ Unable to connect to the job search service. Please make sure the backend server is running (python api.py) and try again.",
+          text: "❌ Unable to connect to the job search service. Please make sure the backend server is running and try again.",
         },
       ]);
     } finally {

@@ -4,6 +4,7 @@ import asyncio
 import logging
 from dotenv import load_dotenv
 from jobAgent import run_job_search
+from conversationalAgent import handle_conversation
 
 load_dotenv()
 
@@ -61,44 +62,54 @@ def search_jobs():
 
 @app.route('/api/chat', methods=['POST'])
 def chat():
-    """Chat endpoint that handles conversational queries."""
+    """Chat endpoint that intelligently routes between conversation and job search."""
     try:
         data = request.json
         message = data.get('message', '').strip()
+        conversation_history = data.get('history', [])  # Optional conversation context
         
         if not message:
             return jsonify({
                 "error": "Message is required"
             }), 400
         
-        # Check if the message is a job search query
-        job_keywords = ['job', 'jobs', 'position', 'role', 'work', 'career', 'hire', 'hiring', 'find', 'search', 'looking for']
-        is_job_query = any(keyword in message.lower() for keyword in job_keywords)
+        logger.info(f"Received chat message: {message}")
         
-        if is_job_query:
-            logger.info(f"Processing as job search: {message}")
+        # Use conversational agent to determine intent and respond
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        try:
+            # Analyze conversation and determine next action
+            conversation_result = loop.run_until_complete(
+                handle_conversation(message, conversation_history)
+            )
             
-            # Run the job search
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
-            try:
-                result = loop.run_until_complete(run_job_search(None, message, None))
+            if conversation_result["should_search"]:
+                # User wants to search for jobs
+                logger.info(f"Routing to job search agent: {conversation_result['reasoning']}")
+                
+                job_results = loop.run_until_complete(run_job_search(None, message, None))
                 
                 return jsonify({
                     "success": True,
                     "type": "job_results",
-                    "message": result
+                    "message": job_results,
+                    "is_search": True
                 })
-            finally:
-                loop.close()
-        else:
-            # Return a helpful response for non-job queries
-            return jsonify({
-                "success": True,
-                "type": "response",
-                "message": "I'm here to help you find jobs! Please describe what kind of job you're looking for. For example: 'Find me remote Python developer jobs' or 'Looking for senior data scientist positions in New York'."
-            })
+            else:
+                # General conversation
+                logger.info(f"Responding conversationally: {conversation_result['reasoning']}")
+                
+                return jsonify({
+                    "success": True,
+                    "type": "conversation",
+                    "message": conversation_result["response"],
+                    "is_search": False
+                })
+                
+        finally:
+            loop.close()
     
     except Exception as e:
         logger.error(f"Error in chat endpoint: {str(e)}", exc_info=True)

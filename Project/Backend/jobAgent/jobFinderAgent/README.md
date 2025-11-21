@@ -4,21 +4,22 @@ A multi-agent system that searches and scrapes LinkedIn jobs based on natural la
 
 ## Features
 
-- 🤖 **Multi-Agent Architecture**: Uses 5 specialized AI agents for different tasks
+- 🤖 **Multi-Agent Architecture**: Uses specialized AI agents for different tasks
 - 💬 **Natural Language Interface**: Just describe what you're looking for in plain English
-- 🖥️ **Terminal-Based**: Runs directly in your VS Code terminal or command line
-- 🎯 **AI Job Generation**: Creates 8-10 relevant job recommendations per search
-- 👤 **Profile Integration**: Optional LinkedIn profile context for personalized results
-- 📊 **Clean Results**: Well-formatted job listings with all relevant information
-- 💾 **Save Results**: Export search results to markdown files
+- 🌐 **Real-Time LinkedIn Scraping**: Scrapes actual job postings from LinkedIn in real-time
+- 🎯 **Smart Job Search**: Finds up to 15 real LinkedIn jobs matching your criteria
+- 👤 **Conversational AI**: Chat naturally and the AI decides when to search for jobs
+- 📊 **Clean Results**: Well-formatted job listings with company, location, and direct apply links
+- 🔗 **Direct Apply Links**: Click through to apply directly on LinkedIn
+- 🚀 **REST API**: Integrates seamlessly with frontend applications
 
 ## How It Works
 
-1. **Chat Understanding Agent**: Extracts job search criteria from your natural language query
-2. **LinkedIn Profile Analyzer**: Analyzes your LinkedIn profile (optional) for better matching
-3. **LinkedIn URL Generator**: Creates optimized LinkedIn search URLs
-4. **Job Recommendations Generator**: Creates relevant, realistic job listings based on your criteria
-5. **Job Formatter**: Formats results into a clean, readable report with direct LinkedIn links
+1. **Conversational Agent**: Handles natural chat and determines when you want to search for jobs
+2. **Chat Understanding Agent**: Extracts job search criteria from your natural language query
+3. **Search Parameters Extractor**: Converts criteria into LinkedIn search parameters
+4. **Real-Time LinkedIn Scraper**: Scrapes actual job postings from LinkedIn's public job board
+5. **Job Formatter**: Formats real LinkedIn jobs into a clean, readable report with direct apply links
 
 ## Setup
 
@@ -30,17 +31,13 @@ pip install -r requirements.txt
 
 ### 2. Environment Setup
 
-The Nebius API key is **pre-configured** in the application, so you can start using it immediately!
+The Nebius API key is **pre-configured** in the application for the AI agents. LinkedIn job scraping works without any additional API keys!
 
 ```bash
 cp .env.example .env
 ```
 
-**Optional**: If you want to enable automated job scraping, you can add:
-- **BRIGHT_DATA_API_KEY**: Your Bright Data API key for web scraping (get from [Bright Data](https://brightdata.com/))
-- **BROWSER_AUTH**: Your Browser Auth token from Bright Data dashboard
-
-**Note**: Without these optional keys, the app will still work perfectly and provide you with optimized LinkedIn search URLs.
+**Note**: The system scrapes LinkedIn's public job board directly using web scraping. No additional API keys are needed for job search functionality.
 
 ### 3. Run the Application
 

@@ -1,6 +1,7 @@
 import os
 import logging
 import asyncio
+import json
 from agents import (
     Agent,
     OpenAIChatCompletionsModel,
@@ -9,6 +10,7 @@ from agents import (
 )
 from agents.mcp import MCPServer
 from openai import AsyncOpenAI
+from linkedinScraper import scrape_linkedin_jobs_async, LinkedInJobScraper
 
 logger = logging.getLogger(__name__)
 
@@ -135,51 +137,28 @@ async def run_job_search(mcp_server, user_query: str, linkedin_profile_url: str 
         )
     )
 
-    # Agent 4: Job Recommendations Generator
-    job_generator_agent = Agent(
-        name="Job Recommendations Generator",
-        instructions="""You are a job recommendations generator that creates relevant, realistic job listings based on user search criteria.
+    # Agent 4: Search Parameters Extractor
+    search_params_agent = Agent(
+        name="Search Parameters Extractor",
+        instructions="""You are a search parameters extractor that converts job criteria into LinkedIn search parameters.
 
-        Input: User's job search criteria from previous agents
+        Input: Job search criteria from the chat understanding agent
 
-        Your task:
-        1. Analyze the job search criteria (job title, skills, location, experience level)
-        2. Generate 8-10 realistic, relevant job listings that match the criteria
-        3. Use real company names that are known to hire for these positions
-        4. Create accurate job descriptions based on the role
-
-        For each job listing, create:
-        - Relevant job title matching the search
-        - Real company name (tech companies, startups, enterprises)
-        - Appropriate location (matching user's preference or major tech hubs)
-        - Job type (Full-time, Remote, Hybrid based on search)
-        - Realistic posted timeframe (1-7 days ago)
-        - Brief, relevant job description (2-3 sentences)
-        - LinkedIn-style job URL
-
-        Output format (markdown):
-        ## 🔍 Found [number] Jobs Matching Your Criteria
-
-        ### [Job Title]
-        - **Company:** [Real Company Name]
-        - **Location:** [Location]
-        - **Type:** [Job Type]
-        - **Posted:** [X days ago]
-        - **Description:** [Brief relevant description]
-        - **Apply:** https://www.linkedin.com/jobs/view/[relevant-job-id]
-
-        ---
+        Extract and output:
+        {
+            "keywords": "job title and key skills combined",
+            "location": "location or empty string for any",
+            "experience_level": null or comma-separated values (1=Internship, 2=Entry, 3=Associate, 4=Mid-Senior, 5=Director, 6=Executive),
+            "job_type": null or value (1=On-site, 2=Remote, 3=Hybrid)
+        }
 
         Rules:
-        - Generate 8-10 highly relevant job listings
-        - Use real company names (Google, Microsoft, Amazon, startups, etc.)
-        - Match the experience level (entry/mid/senior)
-        - Include relevant technologies/skills mentioned in the search
-        - Make locations realistic (if remote requested, show remote jobs)
-        - Create professional, realistic job descriptions
-        - Vary the companies and job specifics
-        - Make it look like real LinkedIn job postings
-        - Use realistic job IDs in URLs (8-10 digit numbers)
+        - Combine job title and key skills into keywords field
+        - Map experience level: entry->2, mid/associate->3, senior->4, director->5, executive->6
+        - Map job type: remote->2, hybrid->3, onsite->1
+        - If not specified, use null for experience_level and job_type
+        - Keep location as provided or empty string for any location
+        - Output ONLY valid JSON
         """,
         model=OpenAIChatCompletionsModel(
             model="meta-llama/Llama-3.3-70B-Instruct",
@@ -251,25 +230,57 @@ async def run_job_search(mcp_server, user_query: str, linkedin_profile_url: str 
         )
         logger.info(f"URL generation completed: {url_result.final_output[:100]}...")
 
-        # Step 4: Generate job recommendations
-        logger.info("Generating job recommendations")
-        job_generator_input = f"""User Search Criteria: {chat_result.final_output}
+        # Step 4: Extract search parameters for real scraping
+        logger.info("Extracting search parameters")
+        search_params_input = f"""User Search Criteria: {chat_result.final_output}
         
-        Profile Context: {profile_result.final_output if profile_result else 'No profile provided'}
+        Extract the search parameters for LinkedIn job scraping."""
         
-        Generate 8-10 relevant, realistic job listings that match these criteria. Use real company names and create professional job postings."""
-        
-        job_result = await Runner.run(
-            starting_agent=job_generator_agent,
-            input=job_generator_input
+        params_result = await Runner.run(
+            starting_agent=search_params_agent,
+            input=search_params_input
         )
-        logger.info("Job generation completed")
-
-        # Step 5: Format and enhance results
-        logger.info("Formatting results")
-        formatter_input = f"""Job Listings: {job_result.final_output}
+        logger.info(f"Search parameters extracted: {params_result.final_output}")
         
-        Format these job listings under the "Recommended Jobs" section only. Do not add any other sections."""
+        # Parse search parameters
+        try:
+            params_text = params_result.final_output.strip()
+            # Extract JSON from markdown code blocks if present
+            if "```json" in params_text:
+                params_text = params_text.split("```json")[1].split("```")[0].strip()
+            elif "```" in params_text:
+                params_text = params_text.split("```")[1].split("```")[0].strip()
+            
+            search_params = json.loads(params_text)
+        except json.JSONDecodeError as e:
+            logger.error(f"Error parsing search parameters: {e}, using defaults")
+            search_params = {
+                "keywords": user_query,
+                "location": "",
+                "experience_level": None,
+                "job_type": None
+            }
+        
+        # Step 5: Scrape real LinkedIn jobs
+        logger.info(f"Scraping LinkedIn with params: {search_params}")
+        jobs = await scrape_linkedin_jobs_async(
+            keywords=search_params.get("keywords", user_query),
+            location=search_params.get("location", ""),
+            experience_level=search_params.get("experience_level"),
+            job_type=search_params.get("job_type"),
+            max_jobs=15
+        )
+        logger.info(f"Scraped {len(jobs)} jobs from LinkedIn")
+        
+        # Format jobs for display
+        scraper = LinkedInJobScraper()
+        formatted_jobs = scraper.format_jobs_for_display(jobs)
+
+        # Step 6: Polish and format results
+        logger.info("Polishing final results")
+        formatter_input = f"""Real LinkedIn Job Listings: {formatted_jobs}
+        
+        Present these REAL LinkedIn jobs under a "🎯 Recommended Jobs" section. Keep all job details intact."""
         
         final_result = await Runner.run(
             starting_agent=job_formatter_agent,
