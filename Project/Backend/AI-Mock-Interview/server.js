@@ -6,7 +6,7 @@ const OpenAI = require("openai");
 
 // Load variables from .env
 const path = require("path");
-dotenv.config({ path: path.join(__dirname, ".env") });
+dotenv.config({ path: path.join(__dirname, ".env.local") });
 
 // Create Express app
 const app = express();
@@ -97,5 +97,5 @@ Respond in clear text.
 
 // Start the server
 app.listen(PORT, () => {
-  console.log(`✅ Server listening at http://localhost:${PORT}`);
+  console.log(` Server listening at http://localhost:${PORT}`);
 });
