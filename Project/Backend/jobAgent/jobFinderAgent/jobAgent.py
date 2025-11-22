@@ -10,7 +10,7 @@ from agents import (
 )
 from agents.mcp import MCPServer
 from openai import AsyncOpenAI
-from linkedinScraper import scrape_linkedin_jobs_async, LinkedInJobScraper
+from googleJobScraper import GoogleJobScraper
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,25 @@ async def run_job_search(mcp_server, user_query: str, linkedin_profile_url: str 
         Formatted job search results
     """
     logger.info(f"Starting job search for query: {user_query}")
-    
+
+    # Determine number of jobs to search for
+    import re
+    max_jobs = 5  # Default
+    match = re.search(r'(?:search|show|find|give|need|get|want|see|list|display)\s*(\d+)\s*(?:jobs|positions|results|openings)?', user_query, re.IGNORECASE)
+    if match:
+        try:
+            max_jobs = int(match.group(1))
+        except Exception:
+            max_jobs = 5
+    else:
+        # Try to find any standalone number in the query
+        match2 = re.search(r'(\d+)\s*(?:jobs|positions|results|openings)', user_query, re.IGNORECASE)
+        if match2:
+            try:
+                max_jobs = int(match2.group(1))
+            except Exception:
+                max_jobs = 5
+
     api_key = os.environ["NEBIUS_API_KEY"]
     base_url = "https://api.tokenfactory.nebius.com/v1" 
     client = AsyncOpenAI(base_url=base_url, api_key=api_key)
@@ -43,6 +61,7 @@ async def run_job_search(mcp_server, user_query: str, linkedin_profile_url: str 
         - Required skills or technologies
         - Experience level (entry, mid, senior)
         - Location preferences (remote, specific city, etc.)
+        - types of job (part-time, full-time, contract, etc.)
         - Company type preferences (startup, enterprise, etc.)
         - Any other relevant job search criteria
 
@@ -50,8 +69,9 @@ async def run_job_search(mcp_server, user_query: str, linkedin_profile_url: str 
         {
             "job_title": "extracted job title",
             "keywords": ["keyword1", "keyword2"],
-            "experience_level": "entry/mid/senior",
+            "experience_level": "entry/mid/senior/internship",
             "location": "location preference",
+            "job_type": "part-time/full-time/contract",
             "additional_criteria": "any other relevant info"
         }
 
@@ -113,8 +133,9 @@ async def run_job_search(mcp_server, user_query: str, linkedin_profile_url: str 
         - location: location preference
         - f_E: experience level (1=Internship, 2=Entry, 3=Associate, 4=Mid-Senior, 5=Director, 6=Executive)
         - f_WT: work type (1=On-site, 2=Remote, 3=Hybrid)
+        - f_JT: job type (1=full-time, 2=part-time, 3=contract)
         - position: 1 (pagination)
-        - pageNum: 0 (first page)
+        - pageNum: auto-incremented page number for pagination
 
         Example URL format:
         https://www.linkedin.com/jobs/search/?keywords=Software%20Engineer&location=Remote&f_E=2,3&f_WT=2
@@ -149,13 +170,15 @@ async def run_job_search(mcp_server, user_query: str, linkedin_profile_url: str 
             "keywords": "job title and key skills combined",
             "location": "location or empty string for any",
             "experience_level": null or comma-separated values (1=Internship, 2=Entry, 3=Associate, 4=Mid-Senior, 5=Director, 6=Executive),
-            "job_type": null or value (1=On-site, 2=Remote, 3=Hybrid)
+            "work_type": null or value (1=On-site, 2=Remote, 3=Hybrid)
+            "job_type": null or value (1=full-time, 2=part-time, 3=contract)
         }
 
         Rules:
         - Combine job title and key skills into keywords field
         - Map experience level: entry->2, mid/associate->3, senior->4, director->5, executive->6
-        - Map job type: remote->2, hybrid->3, onsite->1
+        - Map work type: onsite->1, remote->2, hybrid->3
+        - Map job type: full-time->1, part-time->2, contract->3
         - If not specified, use null for experience_level and job_type
         - Keep location as provided or empty string for any location
         - Output ONLY valid JSON
@@ -169,13 +192,13 @@ async def run_job_search(mcp_server, user_query: str, linkedin_profile_url: str 
     # Agent 5: Job Formatter and Enhancer
     job_formatter_agent = Agent(
         name="Job Formatter",
-        instructions="""You are a job formatter that displays recommended jobs in a clean format.
+        instructions="""You are a job formatter that displays recommended jobs in a clean format. The job listings are REAL LinkedIn jobs scraped based on user criteria. The clickable apply button will be available there and in the button the link of the post will be there.
 
         Input: Job listings from the job generator
 
         Output ONLY the job listings section with this exact format:
 
-        ## 🎯 Recommended Jobs
+
 
         [Insert all job listings here with full formatting - keep every job detail]
 
@@ -261,34 +284,35 @@ async def run_job_search(mcp_server, user_query: str, linkedin_profile_url: str 
                 "job_type": None
             }
         
-        # Step 5: Scrape real LinkedIn jobs
-        logger.info(f"Scraping LinkedIn with params: {search_params}")
-        jobs = await scrape_linkedin_jobs_async(
+        # Step 5: Scrape real Google Jobs
+        logger.info(f"Scraping Google Jobs with params: {search_params}")
+        scraper = GoogleJobScraper()
+        jobs = scraper.scrape_jobs(
             keywords=search_params.get("keywords", user_query),
-            location=search_params.get("location", ""),
-            experience_level=search_params.get("experience_level"),
-            job_type=search_params.get("job_type"),
-            max_jobs=15
+            location=search_params.get("location", None),
+            max_jobs=max_jobs
         )
-        logger.info(f"Scraped {len(jobs)} jobs from LinkedIn")
-        
+        logger.info(f"Scraped {len(jobs)} jobs from Google Jobs")
+
         # Format jobs for display
-        scraper = LinkedInJobScraper()
-        formatted_jobs = scraper.format_jobs_for_display(jobs)
+        job_messages = []
+        for job in jobs:
+            job_md = f"### {job['title']}\n" \
+                f"- **Company:** {job['company']}\n" \
+                f"- **Location:** {job['location']}\n"
+            if job.get('description'):
+                desc = job['description'][:200] + "..." if len(job['description']) > 200 else job['description']
+                job_md += f"- **Description:** {desc}\n"
+            if job.get('url'):
+                job_md += f"- **Apply:** {job['url']}\n"
+            job_messages.append(job_md)
 
-        # Step 6: Polish and format results
-        logger.info("Polishing final results")
-        formatter_input = f"""Real LinkedIn Job Listings: {formatted_jobs}
-        
-        Present these REAL LinkedIn jobs under a "🎯 Recommended Jobs" section. Keep all job details intact."""
-        
-        final_result = await Runner.run(
-            starting_agent=job_formatter_agent,
-            input=formatter_input
-        )
+        # If no jobs found, return a single message
+        if not job_messages:
+            job_messages = ["## 🎯 No Jobs Found\n\nNo jobs matching your criteria were found on Google Jobs at this time. Try:\n- Broadening your search terms\n- Adjusting location preferences\n- Checking back later"]
+
         logger.info("Result formatting completed")
-
-        return final_result.final_output
+        return job_messages
 
     except KeyError as e:
         logger.error(f"Missing required environment variable: {str(e)}")
