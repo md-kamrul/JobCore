@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { getResumeCheckerRecommendation } from "../components/ResumeCheckerAgent";
 
 const JobAgent = () => {
   const [messages, setMessages] = useState([
@@ -7,78 +8,90 @@ const JobAgent = () => {
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
 
-  const handleSend = async (e) => {
-    e.preventDefault();
-    if (!input.trim() || isTyping) return;
+    const handleSend = async (e) => {
+      e.preventDefault();
+      if (!input.trim() || isTyping) return;
 
-    const userMessage = { sender: "user", text: input };
-    const userQuery = input;
-    setMessages((prev) => [...prev, userMessage]);
-    setInput("");
-    setIsTyping(true);
+      const userMessage = { sender: "user", text: input };
+      const userQuery = input;
+      setMessages((prev) => [...prev, userMessage]);
+      setInput("");
+      setIsTyping(true);
 
-    try {
-      // Call the backend API
-      const response = await fetch('http://localhost:5001/api/chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ message: userQuery }),
-      });
+      // Step 1: Agent 'understands' the query
+      setMessages((prev) => [
+        ...prev,
+        { sender: "ai", text: "🤔 Understanding your query..." },
+      ]);
 
-      const data = await response.json();
-
-      if (data.success) {
-        // Check if it's a job search result or conversational response
-        if (data.is_search) {
-          // Show searching progress for job searches
-          setMessages((prev) => [
-            ...prev,
-            { sender: "ai", text: `🔍 Searching LinkedIn for "${userQuery}"...\n\nThis may take 30-60 seconds as I:\n1. Understand your requirements\n2. Generate search criteria\n3. Find relevant jobs\n4. Format results` },
-          ]);
-          
-          // Wait a moment to show the progress message
-          await new Promise(resolve => setTimeout(resolve, 1000));
-          
-          // Remove the searching message and add results
+      try {
+        // Step 2: Decide which agent to call
+        const recommendation = getResumeCheckerRecommendation(userQuery);
+        if (recommendation) {
+          // ResumeCheckerAgent handles this (dynamic routing)
+          await new Promise(resolve => setTimeout(resolve, 800));
           setMessages((prev) => {
+            // Remove 'understanding' message and add recommendation
             const newMessages = prev.slice(0, -1);
-            return [...newMessages, { sender: "ai", text: data.message }];
+            return [
+              ...newMessages,
+              { sender: "ai", text: recommendation },
+            ];
+          });
+          return; // Do not proceed to job search
+        }
+        // JobSearchAgent handles this
+        await new Promise(resolve => setTimeout(resolve, 800));
+        setMessages((prev) => {
+          // Remove 'understanding' message and add searching progress
+          const newMessages = prev.slice(0, -1);
+          return [
+            ...newMessages,
+            { sender: "ai", text: `🔍 Searching LinkedIn for "${userQuery}"...\n\nThis may take 30-60 seconds as I:\n1. Understand your requirements\n2. Generate search criteria\n3. Find relevant jobs\n4. Format results` },
+          ];
+        });
+        // Call the backend API as usual
+        const response = await fetch('http://localhost:5001/api/chat', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ message: userQuery }),
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+          setMessages((prev) => {
+            // Remove searching progress and add results
+            const newMessages = prev.slice(0, -1);
+            return [
+              ...newMessages,
+              { sender: "ai", text: data.message },
+            ];
           });
         } else {
-          // Add conversational response directly
           setMessages((prev) => [
             ...prev,
             {
               sender: "ai",
-              text: data.message,
+              text: `❌ Error: ${data.message || "Something went wrong. Please try again."}`,
             },
           ]);
         }
-      } else {
+      } catch (error) {
+        console.error('Error calling API:', error);
         setMessages((prev) => [
           ...prev,
           {
             sender: "ai",
-            text: `❌ Error: ${data.message || "Something went wrong. Please try again."}`,
+            text: "❌ Unable to connect to the job search service. Please make sure the backend server is running and try again.",
           },
         ]);
+      } finally {
+        setIsTyping(false);
       }
-    } catch (error) {
-      console.error('Error calling API:', error);
-      
-      setMessages((prev) => [
-        ...prev,
-        {
-          sender: "ai",
-          text: "❌ Unable to connect to the job search service. Please make sure the backend server is running and try again.",
-        },
-      ]);
-    } finally {
-      setIsTyping(false);
-    }
-  };
+    };
 
   return (
     <div className="min-h-screen flex flex-col bg-[#0d1117] text-white">
@@ -92,7 +105,7 @@ const JobAgent = () => {
             }`}
           >
             <div
-                className={`max-w-[90%] break-normal whitespace-pre-line p-4 rounded-2xl overflow-x-auto ${
+                className={`max-w-[90%] break-normal whitespace-pre-line p-4 rounded-2xl ${
                   msg.sender === "user"
                     ? "bg-blue-600 text-white rounded-br-none"
                     : "bg-[#161b22] text-gray-200 rounded-bl-none"
