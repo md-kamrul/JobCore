@@ -19,7 +19,7 @@ const JobAgent = () => {
 
     try {
       // Call the backend API
-      const response = await fetch('http://localhost:5000/api/chat', {
+      const response = await fetch('http://localhost:5001/api/chat', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -92,11 +92,11 @@ const JobAgent = () => {
             }`}
           >
             <div
-              className={`max-w-[70%] whitespace-pre-line p-3 rounded-2xl ${
-                msg.sender === "user"
-                  ? "bg-blue-600 text-white rounded-br-none"
-                  : "bg-[#161b22] text-gray-200 rounded-bl-none"
-              }`}
+                className={`max-w-[90%] break-normal whitespace-pre-line p-4 rounded-2xl overflow-x-auto ${
+                  msg.sender === "user"
+                    ? "bg-blue-600 text-white rounded-br-none"
+                    : "bg-[#161b22] text-gray-200 rounded-bl-none"
+                }`}
             >
               {msg.text}
             </div>

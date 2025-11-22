@@ -23,7 +23,7 @@ pip install -r requirements.txt
 python api.py
 ```
 
-The API server will start on `http://localhost:5000`
+The API server will start on `http://localhost:5001`
 
 ### 3. Start the Frontend
 
@@ -111,7 +111,7 @@ Health check endpoint.
 - Install missing dependencies: `pip install -r requirements.txt`
 
 **Frontend can't connect:**
-- Make sure backend is running on port 5000
+- Make sure backend is running on port 5001
 - Check CORS is enabled (already configured)
 - Check browser console for errors
 

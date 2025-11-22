@@ -131,4 +131,4 @@ if __name__ == '__main__':
     logger.info("✅ API Key loaded successfully")
     logger.info("🚀 Starting Job Agent API Server...")
     
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(host='0.0.0.0', port=5001, debug=True)
