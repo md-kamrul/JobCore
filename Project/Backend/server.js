@@ -11,21 +11,21 @@ app.use(cors());
 app.use(express.json());
 app.use("/uploads", express.static("uploads"));
 
-// ✅ OpenAI ক্লায়েন্ট তৈরি
+
 const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-// ✅ Multer সেটআপ (অডিও ফাইল সংরক্ষণের জন্য)
+
 const storage = multer.diskStorage({
   destination: "uploads/",
   filename: (req, file, cb) => cb(null, Date.now() + "-" + file.originalname),
 });
 const upload = multer({ storage });
 
-// ==================== API ROUTES ====================
 
-// 1️⃣ Start Interview
+
+
 app.post("/api/interview/start", (req, res) => {
   const { name, role } = req.body;
   res.json({
@@ -34,7 +34,6 @@ app.post("/api/interview/start", (req, res) => {
   });
 });
 
-// 2️⃣ Get Question
 app.get("/api/interview/question", async (req, res) => {
   try {
     const { role } = req.query;
@@ -52,7 +51,7 @@ app.get("/api/interview/question", async (req, res) => {
   }
 });
 
-// 3️⃣ Upload Audio & Transcribe
+//  Upload Audio & Transcribe
 app.post("/api/interview/upload", upload.single("audio"), async (req, res) => {
   try {
     const audioPath = req.file.path;
@@ -71,7 +70,7 @@ app.post("/api/interview/upload", upload.single("audio"), async (req, res) => {
   }
 });
 
-// 4️⃣ Analyze Response
+//  Analyze Response
 app.post("/api/interview/analyze", async (req, res) => {
   try {
     const { question, transcript } = req.body;
@@ -100,6 +99,7 @@ app.post("/api/interview/analyze", async (req, res) => {
   }
 });
 
-// ==================== SERVER RUN ====================
+//SERVER RUN
 const PORT = process.env.PORT || 5000;
+
 app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
