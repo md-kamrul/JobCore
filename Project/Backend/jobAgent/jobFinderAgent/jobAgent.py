@@ -296,15 +296,17 @@ async def run_job_search(mcp_server, user_query: str, linkedin_profile_url: str 
 
         # Format jobs for display
         job_messages = []
-        for job in jobs:
-            job_md = f"### {job['title']}\n" \
-                f"- **Company:** {job['company']}\n" \
-                f"- **Location:** {job['location']}\n"
-            if job.get('description'):
-                desc = job['description'][:200] + "..." if len(job['description']) > 200 else job['description']
-                job_md += f"- **Description:** {desc}\n"
-            if job.get('url'):
-                job_md += f"- **Apply:** {job['url']}\n"
+        for job in jobs[:max_jobs]:
+            job_md = (
+                f"- **Title:** {job['title']}\n"
+                f"  **Company:** {job['company']}\n"
+                f"  **Type:** {job['type']}\n"
+                f"  **Office:** {job.get('office', 'Not specified')}\n"
+                f"  **Location:** {job['location']}\n"
+                f"  **Experience Level:** {job['experience_level']}\n"
+                f"  **Salary:** {job['salary']}\n"
+                f"  **Apply:** [{job['url']}]({job['url']})\n"
+            )
             job_messages.append(job_md)
 
         # If no jobs found, return a single message
