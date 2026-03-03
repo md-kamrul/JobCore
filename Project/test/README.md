@@ -1,8 +1,8 @@
 # Google Form Submit Agent (MCP + Selenium)
 
 This folder contains:
-- `mcp_form_server.py`: an MCP (stdio) server exposing a `submit_google_form` tool.
-- `test.py`: a simple CLI "agent" that asks for a Google Form URL and calls the MCP tool.
+- `mcp_form_server.py`: an MCP (stdio) server exposing tools to start a session, read questions, answer them, and submit.
+- `test.py`: a simple CLI "agent" that asks for a Google Form URL, then prompts you question-by-question and submits at the end.
 
 ## Setup (macOS)
 
@@ -23,4 +23,4 @@ python test.py
 
 ## Notes
 - Requires Google Chrome installed.
-- For real forms, submission may fail if the form has required fields. This demo only clicks the Submit button.
+- This is best-effort automation; Google Forms DOM can change, and required/validated fields may still block submission.
