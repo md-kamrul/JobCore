@@ -44,9 +44,8 @@ function JobMessageAgent({ jobs }) {
               {job.type && <span className="badge badge-type">{job.type}</span>}
               {job.contract && <span className="badge badge-contract">Contract</span>}
               {job.experience_level && <span className="badge badge-experience">{job.experience_level}</span>}
-            </div>
             {job.salary && <div className="job-message-salary">💰 {job.salary}</div>}
-          </div>
+            </div>
           <div className="job-message-actions">
             {job.url && (
               <a
@@ -55,9 +54,10 @@ function JobMessageAgent({ jobs }) {
                 rel="noopener noreferrer"
                 className="job-message-apply-btn"
               >
-                APPLY NOW
+                See details
               </a>
             )}
+          </div>
           </div>
         </div>
       ))}
