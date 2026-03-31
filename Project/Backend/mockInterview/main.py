@@ -23,11 +23,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
 class QuestionRequest(BaseModel):
     role: str
     level: str
-
 
 class EvaluateRequest(BaseModel):
     role: str
