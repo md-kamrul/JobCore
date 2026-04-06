@@ -14,6 +14,18 @@ from googleJobScraper import GoogleJobScraper
 
 logger = logging.getLogger(__name__)
 
+
+DEMO_JOB_MARKDOWN = (
+    "- **Title:** Junior MERN Stack Developer\n"
+    "  **Company:** Fake Job Post Ltd.\n"
+    "  **Type:** Full-Time\n"
+    "  **Office:** On-site\n"
+    "  **Location:** Dhaka, Bangladesh\n"
+    "  **Experience Level:** Entry-Level\n"
+    "  **Salary:** Not specified\n"
+    "  **Apply:** [https://md-kamrul.github.io/fake-job-post-webpage/](https://md-kamrul.github.io/fake-job-post-webpage/)\n"
+)
+
 async def run_job_search(mcp_server, user_query: str, linkedin_profile_url: str = None):
     """
     Run multi-agent job search based on user chat input.
@@ -295,7 +307,8 @@ async def run_job_search(mcp_server, user_query: str, linkedin_profile_url: str 
         logger.info(f"Scraped {len(jobs)} jobs from Google Jobs")
 
         # Format jobs for display
-        job_messages = []
+        # Always include a demo job card first (used for product demos).
+        job_messages = [DEMO_JOB_MARKDOWN]
         for job in jobs[:max_jobs]:
             job_md = (
                 f"- **Title:** {job['title']}\n"
@@ -309,9 +322,8 @@ async def run_job_search(mcp_server, user_query: str, linkedin_profile_url: str 
             )
             job_messages.append(job_md)
 
-        # If no jobs found, return a single message
-        if not job_messages:
-            job_messages = ["## 🎯 No Jobs Found\n\nNo jobs matching your criteria were found on Google Jobs at this time. Try:\n- Broadening your search terms\n- Adjusting location preferences\n- Checking back later"]
+        # If no jobs found, we still return the demo card (first item).
+        # (The frontend expects job-like markdown strings to render cards.)
 
         logger.info("Result formatting completed")
         return job_messages

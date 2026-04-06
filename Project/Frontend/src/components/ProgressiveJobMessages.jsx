@@ -28,7 +28,8 @@ function parseJobMarkdown(md) {
       job.url = match ? match[2] : "";
     }
   });
-  return job;
+  const hasAnyJobField = Boolean(job.title || job.company || job.url);
+  return hasAnyJobField ? job : null;
 }
 
 const ProgressiveJobMessages = ({ jobMessages, delay = 1200 }) => {
@@ -45,7 +46,9 @@ const ProgressiveJobMessages = ({ jobMessages, delay = 1200 }) => {
     if (!jobMessages || currentIndex >= jobMessages.length) return;
     const timer = setTimeout(() => {
       const jobObj = parseJobMarkdown(jobMessages[currentIndex]);
-      setDisplayedJobs((prev) => [...prev, jobObj]);
+      if (jobObj) {
+        setDisplayedJobs((prev) => [...prev, jobObj]);
+      }
       setCurrentIndex((prev) => prev + 1);
     }, delay);
     return () => clearTimeout(timer);
