@@ -1,14 +1,34 @@
-import React, { useState } from "react";
+import React, { useState, useContext } from "react";
 import { getResumeCheckerRecommendation } from "../components/ResumeCheckerAgent";
 import ProgressiveJobMessages from "../components/ProgressiveJobMessages";
+import { AuthContext } from "../provider/AuthProvider";
 
 const JobAgent = () => {
+  const { user } = useContext(AuthContext);
   const [messages, setMessages] = useState([
     { sender: "ai", text: "Hi there! 👋 How can I help you find a job today?" },
   ]);
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const [allJobMessages, setAllJobMessages] = useState([]); // Store all job searches
+  const [pendingApplication, setPendingApplication] = useState(null); // { applicationId, missing: [] }
+
+  const buildUserProfileForApply = () => {
+    // Best-effort: use auth email + anything the app might have stored.
+    const stored = (() => {
+      try {
+        return JSON.parse(localStorage.getItem("jobcore_profile") || "null");
+      } catch {
+        return null;
+      }
+    })();
+
+    return {
+      ...(stored || {}),
+      email: stored?.email || user?.email || "",
+      name: stored?.name || user?.displayName || "",
+    };
+  };
 
   const handleApplyClick = async (job) => {
     const detailsUrl = job?.url;
@@ -39,6 +59,31 @@ const JobAgent = () => {
       setMessages((prev) =>
         prev.map((m) => (m.id === placeholderId ? { ...m, text: messageText } : m))
       );
+
+      // If it's a Google Form, trigger Agent-B auto-apply
+      if (data?.success && data?.applyUrl && data?.isGoogleForm) {
+        const applyUrl = data.applyUrl;
+        setMessages((prev) => [...prev, { sender: "ai", text: "I am starting to apply the job. Please bear with me..." }]);
+
+        const profile = buildUserProfileForApply();
+        const applyResp = await fetch("http://localhost:5001/api/apply/start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ applyUrl, profile, headless: false }),
+        });
+
+        const applyData = await applyResp.json();
+        if (applyData?.success) {
+          setMessages((prev) => [...prev, { sender: "ai", text: applyData.message }]);
+          if (applyData?.status === "needs_info" && applyData?.applicationId) {
+            setPendingApplication({ applicationId: applyData.applicationId, missing: applyData.missing || [] });
+          } else {
+            setPendingApplication(null);
+          }
+        } else {
+          setMessages((prev) => [...prev, { sender: "ai", text: `❌ ${applyData?.message || "Auto-apply failed."}` }]);
+        }
+      }
     } catch (error) {
       console.error("Error extracting apply URL:", error);
       setMessages((prev) =>
@@ -63,6 +108,42 @@ const JobAgent = () => {
     setMessages((prev) => [...prev, userMessage]);
     setInput("");
     setIsTyping(true);
+
+    // If we're mid application, treat this message as missing-info answer
+    if (pendingApplication?.applicationId) {
+      try {
+        const missing = pendingApplication.missing || [];
+        const first = missing[0];
+        const label = first?.label;
+        const answers = label ? { [label]: userQuery } : { default: userQuery };
+
+        const resp = await fetch("http://localhost:5001/api/apply/continue", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ applicationId: pendingApplication.applicationId, answers, headless: false }),
+        });
+        const data = await resp.json();
+
+        if (data?.success) {
+          setMessages((prev) => [...prev, { sender: "ai", text: data.message }]);
+          if (data?.status === "needs_info") {
+            setPendingApplication({ applicationId: pendingApplication.applicationId, missing: data.missing || [] });
+          } else {
+            setPendingApplication(null);
+          }
+        } else {
+          setMessages((prev) => [...prev, { sender: "ai", text: `❌ ${data?.message || "Auto-apply failed."}` }]);
+          setPendingApplication(null);
+        }
+      } catch (err) {
+        console.error("Error continuing auto-apply:", err);
+        setMessages((prev) => [...prev, { sender: "ai", text: "❌ Unable to continue the auto-apply right now. Please try again." }]);
+        setPendingApplication(null);
+      } finally {
+        setIsTyping(false);
+      }
+      return;
+    }
 
     // Step 1: Agent 'understands' the query
     setMessages((prev) => [

@@ -7,6 +7,20 @@ from jobAgent import run_job_search
 from conversationalAgent import handle_conversation
 from applyUrlAgents import agent_a_extract_apply_url, agent_b_format_apply_url_message
 
+# Allow importing sibling agent packages (jobApplyAgent)
+import os
+import sys
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+from jobApplyAgent.google_form_apply import is_google_form_url, resolve_final_url
+from jobApplyAgent.interactive_google_form import (
+    answer_current_and_advance,
+    next_prompt,
+    start_interactive_session,
+)
+from jobApplyAgent.state import create_session, delete_session, get_session, update_session_answers
+
 load_dotenv()
 
 logging.basicConfig(
@@ -86,6 +100,7 @@ def extract_apply_url():
             "found": result.found,
             "reason": result.reason,
             "message": message,
+            "isGoogleForm": bool(result.apply_url and is_google_form_url(resolve_final_url(result.apply_url))),
         })
 
     except Exception as e:
@@ -94,6 +109,205 @@ def extract_apply_url():
             "success": False,
             "error": str(e),
             "message": "An error occurred while extracting the apply link. Please try again."
+        }), 500
+
+
+@app.route('/api/apply/start', methods=['POST'])
+def start_apply():
+    """Agent-B: Auto-apply flow. If applyUrl is a Google Form, try to fill and submit via Selenium.
+
+    Request JSON:
+      - applyUrl: string
+      - profile: object (best-effort)
+      - headless: bool (optional, default true)
+
+    Response JSON:
+      - message: chat bubble text
+      - status: submitted|needs_info|error
+      - applicationId: present when needs_info
+      - missing: list when needs_info
+    """
+
+    try:
+        data = request.json or {}
+        apply_url = (data.get('applyUrl') or data.get('url') or '').strip()
+        profile = data.get('profile') or {}
+        headless = bool(data.get('headless', True))
+
+        if not apply_url:
+            return jsonify({
+                'success': False,
+                'message': 'applyUrl is required'
+            }), 400
+
+        final_url = resolve_final_url(apply_url)
+        if not is_google_form_url(final_url):
+            return jsonify({
+                'success': True,
+                'status': 'error',
+                'applyUrl': final_url,
+                'message': '⚠️ This apply link is not a Google Form. Please open it and apply manually.'
+            })
+
+        session = create_session(apply_url=final_url, profile=profile)
+        init = start_interactive_session(final_url, headless=headless)
+        if not init.get('ok'):
+            delete_session(session.application_id)
+            return jsonify({
+                'success': True,
+                'status': 'error',
+                'applyUrl': final_url,
+                'message': f"⚠️ {init.get('message') or 'Auto-apply could not start.'}",
+            })
+
+        session.driver = init['driver']
+        session.wait = init['wait']
+        session.questions = init['questions']
+        session.index = init.get('index', 0)
+
+        q, prompt = next_prompt(session.questions, session.index)
+        missing = []
+        if q:
+            missing = [{
+                'label': q.label,
+                'required': q.required,
+                'input_type': q.input_type,
+                'options': q.options,
+            }]
+
+        return jsonify({
+            'success': True,
+            'message': prompt or "",
+            'status': 'needs_info',
+            'applicationId': session.application_id,
+            'applyUrl': final_url,
+            'missing': missing,
+        })
+
+    except Exception as e:
+        logger.error(f"Error in apply start: {str(e)}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'message': f"Auto-apply failed: {str(e)}"
+        }), 500
+
+
+@app.route('/api/apply/continue', methods=['POST'])
+def continue_apply():
+    """Continue an auto-apply session with user-provided missing info."""
+    try:
+        data = request.json or {}
+        application_id = (data.get('applicationId') or '').strip()
+        answers = data.get('answers') or {}
+        headless = bool(data.get('headless', True))
+
+        if not application_id:
+            return jsonify({
+                'success': False,
+                'message': 'applicationId is required'
+            }), 400
+
+        session = update_session_answers(application_id, answers)
+        if not session:
+            return jsonify({
+                'success': False,
+                'message': 'Unknown or expired application session. Please click Apply again.'
+            }), 404
+
+        if not session.driver or not session.wait or not session.questions:
+            delete_session(application_id)
+            return jsonify({
+                'success': True,
+                'status': 'error',
+                'message': '⚠️ Application session is not active anymore. Please click Apply again.',
+                'applyUrl': session.apply_url,
+            })
+
+        # Determine the current question label and grab the user answer
+        current_q, _ = next_prompt(session.questions, session.index)
+        if not current_q:
+            delete_session(application_id)
+            return jsonify({
+                'success': True,
+                'status': 'error',
+                'message': '⚠️ No pending question found. Please click Apply again.',
+                'applyUrl': session.apply_url,
+            })
+
+        user_answer = answers.get(current_q.label) or answers.get('default') or ''
+        user_answer = str(user_answer).strip()
+        if not user_answer:
+            # re-ask
+            _, prompt = next_prompt(session.questions, session.index)
+            return jsonify({
+                'success': True,
+                'status': 'needs_info',
+                'message': prompt,
+                'applicationId': session.application_id,
+                'missing': [{
+                    'label': current_q.label,
+                    'required': current_q.required,
+                    'input_type': current_q.input_type,
+                    'options': current_q.options,
+                }],
+                'applyUrl': session.apply_url,
+            })
+
+        step = answer_current_and_advance(
+            driver=session.driver,
+            wait=session.wait,
+            questions=session.questions,
+            index=session.index,
+            answer=user_answer,
+        )
+
+        status = step.get('status')
+        if status == 'submitted':
+            delete_session(application_id)
+            return jsonify({
+                'success': True,
+                'status': 'submitted',
+                'message': step.get('message') or '✅ Submitted the form.',
+                'applyUrl': session.apply_url,
+            })
+
+        if status == 'needs_info':
+            # Update session state (either advanced on same page or moved to new page)
+            session.index = int(step.get('index', session.index))
+            if step.get('questions') is not None:
+                session.questions = step.get('questions')
+            q, prompt = next_prompt(session.questions, session.index)
+            missing = []
+            if q:
+                missing = [{
+                    'label': q.label,
+                    'required': q.required,
+                    'input_type': q.input_type,
+                    'options': q.options,
+                }]
+            return jsonify({
+                'success': True,
+                'status': 'needs_info',
+                'message': prompt,
+                'applicationId': session.application_id,
+                'missing': missing,
+                'applyUrl': session.apply_url,
+            })
+
+        # error
+        delete_session(application_id)
+        return jsonify({
+            'success': True,
+            'status': 'error',
+            'message': f"⚠️ {step.get('message') or 'Auto-apply could not complete.'}",
+            'applyUrl': session.apply_url,
+        })
+
+    except Exception as e:
+        logger.error(f"Error in apply continue: {str(e)}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'message': f"Auto-apply failed: {str(e)}"
         }), 500
 
 @app.route('/api/chat', methods=['POST'])
