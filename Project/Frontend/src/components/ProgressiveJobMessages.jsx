@@ -32,7 +32,7 @@ function parseJobMarkdown(md) {
   return hasAnyJobField ? job : null;
 }
 
-const ProgressiveJobMessages = ({ jobMessages, delay = 1200 }) => {
+const ProgressiveJobMessages = ({ jobMessages, delay = 1200, onApply }) => {
   const [displayedJobs, setDisplayedJobs] = useState([]);
   const [currentIndex, setCurrentIndex] = useState(0);
 
@@ -56,7 +56,7 @@ const ProgressiveJobMessages = ({ jobMessages, delay = 1200 }) => {
 
   return (
     <div className="progressive-job-messages">
-      <JobMessageAgent jobs={displayedJobs} />
+      <JobMessageAgent jobs={displayedJobs} onApply={onApply} />
     </div>
   );
 };

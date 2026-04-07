@@ -10,6 +10,50 @@ const JobAgent = () => {
   const [isTyping, setIsTyping] = useState(false);
   const [allJobMessages, setAllJobMessages] = useState([]); // Store all job searches
 
+  const handleApplyClick = async (job) => {
+    const detailsUrl = job?.url;
+    if (!detailsUrl) return;
+
+    const placeholderId = `${Date.now()}-${Math.random()}`;
+    setMessages((prev) => [
+      ...prev,
+      { id: placeholderId, sender: "ai", text: "🔗 Finding the application link..." },
+    ]);
+
+    try {
+      const response = await fetch("http://localhost:5001/api/extract-apply-url", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ detailsUrl }),
+      });
+
+      const data = await response.json();
+
+      const messageText =
+        data && data.success
+          ? data.message
+          : `❌ Error: ${data?.message || "Could not extract the apply link."}`;
+
+      setMessages((prev) =>
+        prev.map((m) => (m.id === placeholderId ? { ...m, text: messageText } : m))
+      );
+    } catch (error) {
+      console.error("Error extracting apply URL:", error);
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === placeholderId
+            ? {
+                ...m,
+                text: "❌ Unable to extract the apply link right now. Please try again.",
+              }
+            : m
+        )
+      );
+    }
+  };
+
   const handleSend = async (e) => {
     e.preventDefault();
     if (!input.trim() || isTyping) return;
@@ -120,7 +164,10 @@ const JobAgent = () => {
                     {msg.text}
                   </div>
                 </div>
-                <ProgressiveJobMessages jobMessages={allJobMessages[msg.jobIndex]} />
+                <ProgressiveJobMessages
+                  jobMessages={allJobMessages[msg.jobIndex]}
+                  onApply={handleApplyClick}
+                />
               </div>
             );
           }

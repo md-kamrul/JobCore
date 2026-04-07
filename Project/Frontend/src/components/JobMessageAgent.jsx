@@ -6,8 +6,9 @@ import React from 'react';
  * Displays each job post as a separate message to the user, showing only required info.
  * Props:
  *   jobs: Array of job objects (title, company, type, location, experience_level, salary, url)
+ *   onApply: function(job) called when user clicks the apply/details button
  */
-function JobMessageAgent({ jobs }) {
+function JobMessageAgent({ jobs, onApply }) {
   if (!jobs || jobs.length === 0) {
     return <div className="job-message-agent-empty">No job results found.</div>;
   }
@@ -48,14 +49,23 @@ function JobMessageAgent({ jobs }) {
             </div>
           <div className="job-message-actions">
             {job.url && (
-              <a
-                href={job.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="job-message-apply-btn"
-              >
-                See details
-              </a>
+              <>
+                <a
+                  href={job.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="job-message-apply-btn"
+                >
+                  Details
+                </a>
+                <button
+                  type="button"
+                  className="job-message-apply-btn"
+                  onClick={() => onApply && onApply(job)}
+                >
+                  Apply
+                </button>
+              </>
             )}
           </div>
           </div>

@@ -5,6 +5,7 @@ import logging
 from dotenv import load_dotenv
 from jobAgent import run_job_search
 from conversationalAgent import handle_conversation
+from applyUrlAgents import agent_a_extract_apply_url, agent_b_format_apply_url_message
 
 load_dotenv()
 
@@ -58,6 +59,41 @@ def search_jobs():
             "success": False,
             "error": str(e),
             "message": "An error occurred while searching for jobs. Please try again."
+        }), 500
+
+
+@app.route('/api/extract-apply-url', methods=['POST'])
+def extract_apply_url():
+    """Extract an external apply URL from a job details page."""
+    try:
+        data = request.json or {}
+        details_url = (data.get('detailsUrl') or data.get('url') or '').strip()
+
+        if not details_url:
+            return jsonify({
+                "success": False,
+                "error": "detailsUrl is required"
+            }), 400
+
+        logger.info(f"Extracting apply URL from: {details_url}")
+        result = agent_a_extract_apply_url(details_url)
+        message = agent_b_format_apply_url_message(result)
+
+        return jsonify({
+            "success": True,
+            "detailsUrl": result.details_url,
+            "applyUrl": result.apply_url,
+            "found": result.found,
+            "reason": result.reason,
+            "message": message,
+        })
+
+    except Exception as e:
+        logger.error(f"Error extracting apply url: {str(e)}", exc_info=True)
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "message": "An error occurred while extracting the apply link. Please try again."
         }), 500
 
 @app.route('/api/chat', methods=['POST'])
