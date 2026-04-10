@@ -19,6 +19,7 @@ from jobApplyAgent.interactive_google_form import (
     next_prompt,
     start_interactive_session,
 )
+from jobApplyAgent.profile_resolver import normalize_profile, resolve_answer
 from jobApplyAgent.state import create_session, delete_session, get_session, update_session_answers
 
 load_dotenv()
@@ -31,6 +32,79 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for frontend communication
+
+
+def _build_missing_payload(session, *, question, prompt):
+    missing = []
+    if question:
+        missing = [{
+            'label': question.label,
+            'required': question.required,
+            'input_type': question.input_type,
+            'options': question.options,
+        }]
+    return {
+        'success': True,
+        'status': 'needs_info',
+        'message': prompt,
+        'applicationId': session.application_id,
+        'missing': missing,
+        'applyUrl': session.apply_url,
+    }
+
+
+def _build_confirm_payload(session, *, question, prompt, suggested_answer: str):
+    missing = []
+    if question:
+        missing = [{
+            'label': question.label,
+            'required': question.required,
+            'input_type': question.input_type,
+            'options': question.options,
+        }]
+    msg = prompt or ""
+    if suggested_answer:
+        msg = (
+            f"{msg}\n\nI found a possible answer in your profile."
+            "\nConfirm to use it or click Edit to provide a different answer."
+        ).strip()
+    return {
+        'success': True,
+        'status': 'needs_confirm',
+        'message': msg,
+        'applicationId': session.application_id,
+        'missing': missing,
+        'suggestedAnswer': suggested_answer,
+        'applyUrl': session.apply_url,
+    }
+
+
+def _auto_answer_or_prompt(session):
+    profile = normalize_profile(session.profile)
+
+    current_q, prompt = next_prompt(session.questions, session.index)
+    if not current_q:
+        delete_session(session.application_id)
+        return {
+            'success': True,
+            'status': 'error',
+            'message': '⚠️ No pending question found. Please click Apply again.',
+            'applyUrl': session.apply_url,
+        }
+
+    auto_answer = resolve_answer(current_q.label, profile, session.answers)
+    if (current_q.input_type or '').lower() == 'file' and not auto_answer:
+        auto_answer = profile.get('resume_path')
+
+    if auto_answer:
+        return _build_confirm_payload(
+            session,
+            question=current_q,
+            prompt=prompt,
+            suggested_answer=str(auto_answer),
+        )
+
+    return _build_missing_payload(session, question=current_q, prompt=prompt)
 
 @app.route('/api/health', methods=['GET'])
 def health_check():
@@ -165,24 +239,7 @@ def start_apply():
         session.questions = init['questions']
         session.index = init.get('index', 0)
 
-        q, prompt = next_prompt(session.questions, session.index)
-        missing = []
-        if q:
-            missing = [{
-                'label': q.label,
-                'required': q.required,
-                'input_type': q.input_type,
-                'options': q.options,
-            }]
-
-        return jsonify({
-            'success': True,
-            'message': prompt or "",
-            'status': 'needs_info',
-            'applicationId': session.application_id,
-            'applyUrl': final_url,
-            'missing': missing,
-        })
+        return jsonify(_auto_answer_or_prompt(session))
 
     except Exception as e:
         logger.error(f"Error in apply start: {str(e)}", exc_info=True)
@@ -284,23 +341,7 @@ def continue_apply():
             session.index = int(step.get('index', session.index))
             if step.get('questions') is not None:
                 session.questions = step.get('questions')
-            q, prompt = next_prompt(session.questions, session.index)
-            missing = []
-            if q:
-                missing = [{
-                    'label': q.label,
-                    'required': q.required,
-                    'input_type': q.input_type,
-                    'options': q.options,
-                }]
-            return jsonify({
-                'success': True,
-                'status': 'needs_info',
-                'message': prompt,
-                'applicationId': session.application_id,
-                'missing': missing,
-                'applyUrl': session.apply_url,
-            })
+            return jsonify(_auto_answer_or_prompt(session))
 
         # error
         delete_session(application_id)

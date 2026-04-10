@@ -2,6 +2,7 @@ import React, { useState, useContext, useRef, useEffect } from "react";
 import { getResumeCheckerRecommendation } from "../components/ResumeCheckerAgent";
 import ProgressiveJobMessages from "../components/ProgressiveJobMessages";
 import { AuthContext } from "../provider/AuthProvider";
+import { getProfile, getWorkExperience, getEducation } from "../lib/profileService";
 
 // ─── CheckboxPrompt ──────────────────────────────────────────────────────────
 // Renders an inline multi-select UI when the form question is a checkbox type.
@@ -21,23 +22,6 @@ const CheckboxPrompt = ({ question, onSubmit }) => {
 
   return (
     <div className="mt-2 space-y-2">
-      <p className="text-xs text-gray-400 mb-1">Select one or more options:</p>
-      <div className="flex flex-wrap gap-2">
-        {question.options.map((opt, i) => (
-          <button
-            key={i}
-            type="button"
-            onClick={() => toggle(opt)}
-            className={`px-3 py-1.5 rounded-full text-sm border transition-all ${
-              selected.includes(opt)
-                ? "bg-blue-600 border-blue-500 text-white"
-                : "bg-[#0d1117] border-gray-600 text-gray-300 hover:border-blue-400"
-            }`}
-          >
-            {opt}
-          </button>
-        ))}
-      </div>
       {selected.length > 0 && (
         <button
           type="button"
@@ -51,6 +35,34 @@ const CheckboxPrompt = ({ question, onSubmit }) => {
   );
 };
 
+// ─── ConfirmPrompt ─────────────────────────────────────────────────────────
+// Confirms a suggested answer from the user profile before auto-filling.
+const ConfirmPrompt = ({ suggestedAnswer, onConfirm, onEdit }) => (
+  <div className="mt-3 space-y-2">
+    {suggestedAnswer && (
+      <div className="text-xs text-gray-300 bg-[#0d1117] border border-gray-700 rounded-lg px-3 py-2">
+        Suggested: <span className="text-gray-100">{String(suggestedAnswer)}</span>
+      </div>
+    )}
+    <div className="flex flex-wrap gap-2">
+      <button
+        type="button"
+        onClick={onConfirm}
+        className="px-4 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-semibold transition"
+      >
+        Confirm
+      </button>
+      <button
+        type="button"
+        onClick={onEdit}
+        className="px-4 py-1.5 bg-gray-700 hover:bg-gray-600 text-white rounded-lg text-sm font-semibold transition"
+      >
+        Edit
+      </button>
+    </div>
+  </div>
+);
+
 const JobAgent = () => {
   const { user } = useContext(AuthContext);
   const [messages, setMessages] = useState([
@@ -59,7 +71,7 @@ const JobAgent = () => {
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const [allJobMessages, setAllJobMessages] = useState([]);
-  // pendingApplication: { applicationId, missing: [], awaitingCheckbox: bool }
+  // pendingApplication: { applicationId, missing: [], awaitingCheckbox: bool, awaitingConfirm: bool, suggestedAnswer: any }
   const [pendingApplication, setPendingApplication] = useState(null);
   const bottomRef = useRef(null);
 
@@ -95,7 +107,7 @@ const JobAgent = () => {
     if (options.length > 0) {
       msg += `\nOptions:\n${options.slice(0, 50).map((o, i) => `${i + 1}. ${o}`).join("\n")}`;
       if ((q.input_type || "").toLowerCase() === "checkbox") {
-        msg += "\n\nThis is a multi-select question. You can select multiple options below.";
+        msg ;
       } else {
         msg += "\n\nReply with the option number (e.g. 1) or the option text.";
       }
@@ -156,15 +168,46 @@ const JobAgent = () => {
     return { selected, invalidTokens };
   };
 
-  const buildUserProfileForApply = () => {
+  const buildUserProfileForApply = async () => {
     const stored = (() => {
       try { return JSON.parse(localStorage.getItem("jobcore_profile") || "null"); }
       catch { return null; }
     })();
+
+    let dbProfile = null;
+    let workExperience = null;
+    let education = null;
+
+    if (user?.id) {
+      try {
+        const { data } = await getProfile(user.id);
+        dbProfile = data || null;
+      } catch {
+        dbProfile = null;
+      }
+      try {
+        const { data } = await getWorkExperience(user.id);
+        workExperience = data || null;
+      } catch {
+        workExperience = null;
+      }
+      try {
+        const { data } = await getEducation(user.id);
+        education = data || null;
+      } catch {
+        education = null;
+      }
+    }
+
+    const combined = { ...(dbProfile || {}), ...(stored || {}) };
+
     return {
-      ...(stored || {}),
-      email: stored?.email || user?.email || "",
-      name: stored?.name || user?.displayName || "",
+      ...combined,
+      full_name: combined.full_name || combined.name || user?.displayName || "",
+      name: combined.name || combined.full_name || user?.displayName || "",
+      email: combined.email || stored?.email || user?.email || "",
+      work_experience: workExperience || combined.work_experience || combined.experience || [],
+      education: education || combined.education || [],
     };
   };
 
@@ -180,6 +223,25 @@ const JobAgent = () => {
     const firstQ = missing[0] || null;
     const isCheckbox = (firstQ?.input_type || "").toLowerCase() === "checkbox";
 
+    if (applyData?.status === "needs_confirm") {
+      const prompt = applyData?.message || buildNeedsInfoPrompt(missing);
+      setMessages((prev) => [...prev, {
+        sender: "ai",
+        text: prompt,
+        confirmQuestion: firstQ,
+        suggestedAnswer: applyData?.suggestedAnswer,
+        applicationId: applyData.applicationId,
+      }]);
+      setPendingApplication({
+        applicationId: applyData.applicationId,
+        missing,
+        awaitingCheckbox: false,
+        awaitingConfirm: true,
+        suggestedAnswer: applyData?.suggestedAnswer,
+      });
+      return;
+    }
+
     if (applyData?.status === "needs_info") {
       const prompt = buildNeedsInfoPrompt(missing);
       setMessages((prev) => [...prev, {
@@ -193,6 +255,8 @@ const JobAgent = () => {
         applicationId: applyData.applicationId,
         missing,
         awaitingCheckbox: isCheckbox,
+        awaitingConfirm: false,
+        suggestedAnswer: null,
       });
     } else {
       setMessages((prev) => [...prev, { sender: "ai", text: applyData.message }]);
@@ -230,6 +294,58 @@ const JobAgent = () => {
     }
   };
 
+  const handleConfirmSuggested = async () => {
+    if (!pendingApplication?.applicationId) return;
+
+    const currentQ = (pendingApplication.missing || [])[0];
+    const label = currentQ?.label;
+    const suggested = pendingApplication.suggestedAnswer;
+    const display = suggested ? String(suggested) : "(confirmed)";
+
+    setMessages((prev) => [...prev, { sender: "user", text: `Confirmed: ${display}` }]);
+    setIsTyping(true);
+
+    const answers = label ? { [label]: suggested } : { default: suggested };
+
+    try {
+      const resp = await fetch("http://localhost:5001/api/apply/continue", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ applicationId: pendingApplication.applicationId, answers, headless: false }),
+      });
+      const data = await resp.json();
+      handleApplyResponse(data);
+    } catch {
+      setMessages((prev) => [...prev, { sender: "ai", text: "❌ Unable to continue the auto-apply right now. Please try again." }]);
+      setPendingApplication(null);
+    } finally {
+      setIsTyping(false);
+    }
+  };
+
+  const handleEditSuggested = () => {
+    if (!pendingApplication?.applicationId) return;
+
+    const missing = pendingApplication.missing || [];
+    const firstQ = missing[0] || null;
+    const isCheckbox = (firstQ?.input_type || "").toLowerCase() === "checkbox";
+    const prompt = buildNeedsInfoPrompt(missing);
+
+    setMessages((prev) => [...prev, {
+      sender: "ai",
+      text: `Okay, please provide your answer.\n${prompt}`,
+      checkboxQuestion: isCheckbox ? firstQ : null,
+      applicationId: pendingApplication.applicationId,
+    }]);
+
+    setPendingApplication((prev) => ({
+      ...(prev || {}),
+      awaitingConfirm: false,
+      awaitingCheckbox: isCheckbox,
+      suggestedAnswer: null,
+    }));
+  };
+
   const handleApplyClick = async (job) => {
     const detailsUrl = job?.url;
     if (!detailsUrl) return;
@@ -252,7 +368,7 @@ const JobAgent = () => {
 
       if (data?.success && data?.applyUrl && data?.isGoogleForm) {
         setMessages((prev) => [...prev, { sender: "ai", text: "I am starting to apply the job. Please bear with me..." }]);
-        const profile = buildUserProfileForApply();
+        const profile = await buildUserProfileForApply();
         const applyResp = await fetch("http://localhost:5001/api/apply/start", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -419,6 +535,15 @@ const JobAgent = () => {
                 }`}
               >
                 {msg.text}
+                {msg.confirmQuestion &&
+                  pendingApplication?.awaitingConfirm &&
+                  pendingApplication?.applicationId === msg.applicationId && (
+                    <ConfirmPrompt
+                      suggestedAnswer={msg.suggestedAnswer}
+                      onConfirm={handleConfirmSuggested}
+                      onEdit={handleEditSuggested}
+                    />
+                  )}
                 {/* Render multi-select checkbox UI if this message is a checkbox prompt */}
                 {msg.checkboxQuestion &&
                   msg.checkboxQuestion.options?.length > 0 &&
@@ -459,6 +584,8 @@ const JobAgent = () => {
           placeholder={
             pendingApplication?.awaitingCheckbox
               ? "Select options above, or type manually (e.g. 1, 3)..."
+              : pendingApplication?.awaitingConfirm
+              ? "Confirm or edit above, or type your answer..."
               : "Type your message..."
           }
           className="flex-1 px-4 py-2 rounded-lg bg-[#0d1117] border border-gray-600 focus:outline-none focus:border-blue-500"
