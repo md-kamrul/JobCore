@@ -298,9 +298,9 @@ if __name__ == '__main__':
     print("     🎯 ATS RESUME CHECKER BACKEND - OpenAI GPT Version")
     print("="*70)
     print(f"✅ OpenAI API Key: {'Configured' if API_KEY else 'Missing'}")
-    print(f"🌐 Backend URL: http://localhost:5000")
-    print(f"🏥 Health Check: http://localhost:5000/health")
-    print(f"📚 API Docs: http://localhost:5000/")
+    print(f"🌐 Backend URL: http://localhost:5004")
+    print(f"🏥 Health Check: http://localhost:5004/health")
+    print(f"📚 API Docs: http://localhost:5004/")
     print("="*70)
     print("🚀 Starting Flask server...")
     print("="*70 + "\n")
@@ -309,7 +309,7 @@ if __name__ == '__main__':
         app.run(
             debug=True,
             host='0.0.0.0',
-            port=5000,
+            port=5004,
             threaded=True
         )
     except KeyboardInterrupt:

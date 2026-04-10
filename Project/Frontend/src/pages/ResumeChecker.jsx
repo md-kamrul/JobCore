@@ -86,7 +86,7 @@ export default function ResumeChecker() {
     formData.append('analysis_type', analysisType);
 
     try {
-      const response = await fetch('http://localhost:5000/check_resume', {
+      const response = await fetch('http://localhost:5004/check_resume', {
         method: 'POST',
         body: formData,
       });
@@ -105,7 +105,7 @@ export default function ResumeChecker() {
         setError(data.error || 'Failed to check resume');
       }
     } catch (err) {
-      setError('Failed to connect to backend. Make sure the server is running on http://localhost:5000');
+      setError('Failed to connect to backend. Make sure the server is running on http://localhost:5004');
       console.error(err);
     } finally {
       setLoading(false);
