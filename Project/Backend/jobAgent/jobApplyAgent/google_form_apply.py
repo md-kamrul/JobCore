@@ -436,14 +436,36 @@ def _fill_block(
 
     if input_type == "radio":
         best = _pick_best_option(options, value) or value
-        # click the option whose text matches
         radios = block.find_elements(By.CSS_SELECTOR, "div[role='radio']")
-        for r in radios:
-            if _text(r).strip().lower() == best.strip().lower():
-                _safe_click(driver, r)
-                return
-        # fallback: click first
-        if radios:
+
+        # Match using extracted labels (more reliable than element .text)
+        target = re.sub(r"\s+", " ", (best or "").strip().lower())
+        if target:
+            for r in radios:
+                label_text = _choice_text(r) or _text(r)
+                if not label_text:
+                    try:
+                        label_text = _text(r.find_element(By.XPATH, ".."))
+                    except Exception:
+                        label_text = ""
+                label_norm = re.sub(r"\s+", " ", (label_text or "").strip().lower())
+                if label_norm and label_norm == target:
+                    _safe_click(driver, r)
+                    return
+
+        # Fallback: numeric selection (e.g., "2")
+        m = re.search(r"\b(\d{1,3})\b", str(value or ""))
+        if m:
+            try:
+                idx = int(m.group(1))
+                if 1 <= idx <= len(radios):
+                    _safe_click(driver, radios[idx - 1])
+                    return
+            except Exception:
+                pass
+
+        # Only default to the first option when no user input was provided
+        if not str(value or "").strip() and radios:
             _safe_click(driver, radios[0])
         return
 
@@ -455,11 +477,46 @@ def _fill_block(
             if checkboxes:
                 _safe_click(driver, checkboxes[0])
             return
+        # Precompute checkbox labels for matching
+        checkbox_labels = []
+        for c in checkboxes:
+            label_text = _choice_text(c) or _text(c)
+            if not label_text:
+                try:
+                    label_text = _text(c.find_element(By.XPATH, ".."))
+                except Exception:
+                    label_text = ""
+            checkbox_labels.append((label_text, c))
+
+        clicked = set()
         for d in desired:
-            best = _pick_best_option(options, d)
-            for c in checkboxes:
-                if best and _text(c).strip().lower() == best.strip().lower():
-                    _safe_click(driver, c)
+            best = _pick_best_option(options, d) or d
+            target = re.sub(r"\s+", " ", (best or "").strip().lower())
+            matched = False
+            if target:
+                for label_text, c in checkbox_labels:
+                    label_norm = re.sub(r"\s+", " ", (label_text or "").strip().lower())
+                    if label_norm and label_norm == target:
+                        if c not in clicked:
+                            _safe_click(driver, c)
+                            clicked.add(c)
+                        matched = True
+                        break
+            if matched:
+                continue
+
+            # Fallback: numeric selection (e.g., "1")
+            m = re.search(r"\b(\d{1,3})\b", d)
+            if m:
+                try:
+                    idx = int(m.group(1))
+                    if 1 <= idx <= len(checkboxes):
+                        c = checkboxes[idx - 1]
+                        if c not in clicked:
+                            _safe_click(driver, c)
+                            clicked.add(c)
+                except Exception:
+                    pass
         return
 
     if input_type == "dropdown":

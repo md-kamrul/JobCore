@@ -1,7 +1,55 @@
-import React, { useState, useContext } from "react";
+import React, { useState, useContext, useRef, useEffect } from "react";
 import { getResumeCheckerRecommendation } from "../components/ResumeCheckerAgent";
 import ProgressiveJobMessages from "../components/ProgressiveJobMessages";
 import { AuthContext } from "../provider/AuthProvider";
+
+// ─── CheckboxPrompt ──────────────────────────────────────────────────────────
+// Renders an inline multi-select UI when the form question is a checkbox type.
+const CheckboxPrompt = ({ question, onSubmit }) => {
+  const [selected, setSelected] = useState([]);
+
+  const toggle = (opt) => {
+    setSelected((prev) =>
+      prev.includes(opt) ? prev.filter((o) => o !== opt) : [...prev, opt]
+    );
+  };
+
+  const handleConfirm = () => {
+    if (selected.length === 0) return;
+    onSubmit(selected);
+  };
+
+  return (
+    <div className="mt-2 space-y-2">
+      <p className="text-xs text-gray-400 mb-1">Select one or more options:</p>
+      <div className="flex flex-wrap gap-2">
+        {question.options.map((opt, i) => (
+          <button
+            key={i}
+            type="button"
+            onClick={() => toggle(opt)}
+            className={`px-3 py-1.5 rounded-full text-sm border transition-all ${
+              selected.includes(opt)
+                ? "bg-blue-600 border-blue-500 text-white"
+                : "bg-[#0d1117] border-gray-600 text-gray-300 hover:border-blue-400"
+            }`}
+          >
+            {opt}
+          </button>
+        ))}
+      </div>
+      {selected.length > 0 && (
+        <button
+          type="button"
+          onClick={handleConfirm}
+          className="mt-2 px-4 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-semibold transition"
+        >
+          ✅ Confirm ({selected.length} selected)
+        </button>
+      )}
+    </div>
+  );
+};
 
 const JobAgent = () => {
   const { user } = useContext(AuthContext);
@@ -10,70 +58,59 @@ const JobAgent = () => {
   ]);
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
-  const [allJobMessages, setAllJobMessages] = useState([]); // Store all job searches
-  const [pendingApplication, setPendingApplication] = useState(null); // { applicationId, missing: [] }
+  const [allJobMessages, setAllJobMessages] = useState([]);
+  // pendingApplication: { applicationId, missing: [], awaitingCheckbox: bool }
+  const [pendingApplication, setPendingApplication] = useState(null);
+  const bottomRef = useRef(null);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, isTyping]);
 
   const describeQuestionType = (inputType) => {
     const t = (inputType || "").toLowerCase();
     switch (t) {
-      case "text":
-        return "Short answer";
-      case "email":
-        return "Email";
-      case "textarea":
-        return "Paragraph";
-      case "radio":
-        return "Multiple choice (radio)";
-      case "checkbox":
-        return "Checkboxes (multiple select)";
-      case "dropdown":
-        return "Dropdown";
-      case "file":
-        return "File upload";
-      default:
-        return t ? `Unknown (${t})` : "Unknown";
+      case "text": return "Short answer";
+      case "email": return "Email";
+      case "textarea": return "Paragraph";
+      case "radio": return "Multiple choice (radio)";
+      case "checkbox": return "Checkboxes (multiple select)";
+      case "dropdown": return "Dropdown";
+      case "file": return "File upload";
+      default: return t ? `Unknown (${t})` : "Unknown";
     }
   };
 
   const buildNeedsInfoPrompt = (missing) => {
     if (!Array.isArray(missing) || missing.length === 0) return "";
     const q = missing[0] || {};
-
     const label = (q.label || "").trim() || "(Untitled question)";
     const required = Boolean(q.required);
     const typeLine = `Type: ${describeQuestionType(q.input_type)}`;
-
     const options = Array.isArray(q.options)
       ? q.options.map((o) => String(o || "").trim()).filter(Boolean)
       : [];
 
     let msg = `${label}${required ? " (required)" : ""}\n${typeLine}`;
-
     if (options.length > 0) {
-      msg += `\nOptions:\n${options
-        .slice(0, 50)
-        .map((o, i) => `${i + 1}. ${o}`)
-        .join("\n")}`;
-      msg += "\n\nReply with the option number (e.g. 1) or the option text.";
+      msg += `\nOptions:\n${options.slice(0, 50).map((o, i) => `${i + 1}. ${o}`).join("\n")}`;
+      if ((q.input_type || "").toLowerCase() === "checkbox") {
+        msg += "\n\nThis is a multi-select question. You can select multiple options below.";
+      } else {
+        msg += "\n\nReply with the option number (e.g. 1) or the option text.";
+      }
     }
-
     if ((q.input_type || "").toLowerCase() === "file") {
       msg += "\nPlease send a local file path to upload.";
     }
-
     return msg;
   };
 
   const buildUserProfileForApply = () => {
-    // Best-effort: use auth email + anything the app might have stored.
     const stored = (() => {
-      try {
-        return JSON.parse(localStorage.getItem("jobcore_profile") || "null");
-      } catch {
-        return null;
-      }
+      try { return JSON.parse(localStorage.getItem("jobcore_profile") || "null"); }
+      catch { return null; }
     })();
-
     return {
       ...(stored || {}),
       email: stored?.email || user?.email || "",
@@ -81,79 +118,104 @@ const JobAgent = () => {
     };
   };
 
+  // ── Shared helper: process a /api/apply/continue or /api/apply/start response ──
+  const handleApplyResponse = (applyData) => {
+    if (!applyData?.success) {
+      setMessages((prev) => [...prev, { sender: "ai", text: `❌ ${applyData?.message || "Auto-apply failed."}` }]);
+      setPendingApplication(null);
+      return;
+    }
+
+    const missing = applyData?.missing || [];
+    const firstQ = missing[0] || null;
+    const isCheckbox = (firstQ?.input_type || "").toLowerCase() === "checkbox";
+
+    if (applyData?.status === "needs_info") {
+      const prompt = buildNeedsInfoPrompt(missing);
+      setMessages((prev) => [...prev, {
+        sender: "ai",
+        text: prompt || applyData.message,
+        // Attach checkbox metadata so the renderer can show a multi-select UI
+        checkboxQuestion: isCheckbox ? firstQ : null,
+        applicationId: applyData.applicationId,
+      }]);
+      setPendingApplication({
+        applicationId: applyData.applicationId,
+        missing,
+        awaitingCheckbox: isCheckbox,
+      });
+    } else {
+      setMessages((prev) => [...prev, { sender: "ai", text: applyData.message }]);
+      setPendingApplication(null);
+    }
+  };
+
+  // ── Called when user taps "Confirm" on a multi-select checkbox prompt ──
+  const handleCheckboxConfirm = async (selectedOptions) => {
+    if (!pendingApplication?.applicationId) return;
+
+    // Show user's selection as a chat bubble
+    const selectionText = selectedOptions.join(", ");
+    setMessages((prev) => [...prev, { sender: "user", text: selectionText }]);
+    setIsTyping(true);
+
+    const currentQ = (pendingApplication.missing || [])[0];
+    const label = currentQ?.label;
+    // Send the array directly; api.py will join them into a comma-separated string
+    const answers = label ? { [label]: selectedOptions } : { default: selectedOptions };
+
+    try {
+      const resp = await fetch("http://localhost:5001/api/apply/continue", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ applicationId: pendingApplication.applicationId, answers, headless: false }),
+      });
+      const data = await resp.json();
+      handleApplyResponse(data);
+    } catch {
+      setMessages((prev) => [...prev, { sender: "ai", text: "❌ Unable to continue the auto-apply right now. Please try again." }]);
+      setPendingApplication(null);
+    } finally {
+      setIsTyping(false);
+    }
+  };
+
   const handleApplyClick = async (job) => {
     const detailsUrl = job?.url;
     if (!detailsUrl) return;
 
     const placeholderId = `${Date.now()}-${Math.random()}`;
-    setMessages((prev) => [
-      ...prev,
-      { id: placeholderId, sender: "ai", text: "🔗 Finding the application link..." },
-    ]);
+    setMessages((prev) => [...prev, { id: placeholderId, sender: "ai", text: "🔗 Finding the application link..." }]);
 
     try {
       const response = await fetch("http://localhost:5001/api/extract-apply-url", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ detailsUrl }),
       });
-
       const data = await response.json();
+      const messageText = data && data.success
+        ? data.message
+        : `❌ Error: ${data?.message || "Could not extract the apply link."}`;
 
-      const messageText =
-        data && data.success
-          ? data.message
-          : `❌ Error: ${data?.message || "Could not extract the apply link."}`;
+      setMessages((prev) => prev.map((m) => (m.id === placeholderId ? { ...m, text: messageText } : m)));
 
-      setMessages((prev) =>
-        prev.map((m) => (m.id === placeholderId ? { ...m, text: messageText } : m))
-      );
-
-      // If it's a Google Form, trigger Agent-B auto-apply
       if (data?.success && data?.applyUrl && data?.isGoogleForm) {
-        const applyUrl = data.applyUrl;
         setMessages((prev) => [...prev, { sender: "ai", text: "I am starting to apply the job. Please bear with me..." }]);
-
         const profile = buildUserProfileForApply();
         const applyResp = await fetch("http://localhost:5001/api/apply/start", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ applyUrl, profile, headless: false }),
+          body: JSON.stringify({ applyUrl: data.applyUrl, profile, headless: false }),
         });
-
         const applyData = await applyResp.json();
-        if (applyData?.success) {
-          const needsInfoPrompt = buildNeedsInfoPrompt(applyData?.missing);
-          setMessages((prev) => [
-            ...prev,
-            {
-              sender: "ai",
-              text:
-                applyData?.status === "needs_info" && needsInfoPrompt
-                  ? needsInfoPrompt
-                  : applyData.message,
-            },
-          ]);
-          if (applyData?.status === "needs_info" && applyData?.applicationId) {
-            setPendingApplication({ applicationId: applyData.applicationId, missing: applyData.missing || [] });
-          } else {
-            setPendingApplication(null);
-          }
-        } else {
-          setMessages((prev) => [...prev, { sender: "ai", text: `❌ ${applyData?.message || "Auto-apply failed."}` }]);
-        }
+        handleApplyResponse(applyData);
       }
-    } catch (error) {
-      console.error("Error extracting apply URL:", error);
+    } catch {
       setMessages((prev) =>
         prev.map((m) =>
           m.id === placeholderId
-            ? {
-                ...m,
-                text: "❌ Unable to extract the apply link right now. Please try again.",
-              }
+            ? { ...m, text: "❌ Unable to extract the apply link right now. Please try again." }
             : m
         )
       );
@@ -170,13 +232,42 @@ const JobAgent = () => {
     setInput("");
     setIsTyping(true);
 
-    // If we're mid application, treat this message as missing-info answer
+    // Mid-application: treat text input as an answer to the pending question
     if (pendingApplication?.applicationId) {
       try {
         const missing = pendingApplication.missing || [];
         const first = missing[0];
         const label = first?.label;
-        const answers = label ? { [label]: userQuery } : { default: userQuery };
+
+        const inputType = (first?.input_type || "").toLowerCase();
+        let answerValue = userQuery;
+
+        // If it's a checkbox (multi-select), allow users to type: "1, 3" or "Option A; Option B".
+        if (inputType === "checkbox") {
+          const options = Array.isArray(first?.options) ? first.options : [];
+          const tokens = String(userQuery)
+            .split(/[,;/\n]+/)
+            .map((t) => t.trim())
+            .filter(Boolean);
+
+          const selected = [];
+          for (const t of tokens) {
+            const n = Number(t);
+            if (Number.isInteger(n) && n >= 1 && n <= options.length) {
+              selected.push(options[n - 1]);
+              continue;
+            }
+
+            // Try exact match against provided options (case-insensitive)
+            const exact = options.find((o) => String(o).trim().toLowerCase() === t.toLowerCase());
+            selected.push(exact ?? t);
+          }
+
+          // Backend will join arrays; keep as array to preserve multi-select intent.
+          answerValue = selected.length > 0 ? selected : userQuery;
+        }
+
+        const answers = label ? { [label]: answerValue } : { default: answerValue };
 
         const resp = await fetch("http://localhost:5001/api/apply/continue", {
           method: "POST",
@@ -184,30 +275,8 @@ const JobAgent = () => {
           body: JSON.stringify({ applicationId: pendingApplication.applicationId, answers, headless: false }),
         });
         const data = await resp.json();
-
-        if (data?.success) {
-          const needsInfoPrompt = buildNeedsInfoPrompt(data?.missing);
-          setMessages((prev) => [
-            ...prev,
-            {
-              sender: "ai",
-              text:
-                data?.status === "needs_info" && needsInfoPrompt
-                  ? needsInfoPrompt
-                  : data.message,
-            },
-          ]);
-          if (data?.status === "needs_info") {
-            setPendingApplication({ applicationId: pendingApplication.applicationId, missing: data.missing || [] });
-          } else {
-            setPendingApplication(null);
-          }
-        } else {
-          setMessages((prev) => [...prev, { sender: "ai", text: `❌ ${data?.message || "Auto-apply failed."}` }]);
-          setPendingApplication(null);
-        }
-      } catch (err) {
-        console.error("Error continuing auto-apply:", err);
+        handleApplyResponse(data);
+      } catch {
         setMessages((prev) => [...prev, { sender: "ai", text: "❌ Unable to continue the auto-apply right now. Please try again." }]);
         setPendingApplication(null);
       } finally {
@@ -216,87 +285,48 @@ const JobAgent = () => {
       return;
     }
 
-    // Step 1: Agent 'understands' the query
-    setMessages((prev) => [
-      ...prev,
-      { sender: "ai", text: "🤔 Understanding your query..." },
-    ]);
+    // Normal chat / job search flow
+    setMessages((prev) => [...prev, { sender: "ai", text: "🤔 Understanding your query..." }]);
 
     try {
-      // Step 2: Decide which agent to call
       const recommendation = getResumeCheckerRecommendation(userQuery);
       if (recommendation) {
         await new Promise((resolve) => setTimeout(resolve, 800));
-        setMessages((prev) => {
-          const newMessages = prev.slice(0, -1);
-          return [
-            ...newMessages,
-            { sender: "ai", text: recommendation },
-          ];
-        });
+        setMessages((prev) => { const n = prev.slice(0, -1); return [...n, { sender: "ai", text: recommendation }]; });
         setIsTyping(false);
         return;
       }
       await new Promise((resolve) => setTimeout(resolve, 800));
       setMessages((prev) => {
-        const newMessages = prev.slice(0, -1);
-        return [
-          ...newMessages,
-          {
-            sender: "ai",
-            text: `🔍 Searching for "${userQuery}"...\n\nThis may take 30-60 seconds as I:\n1. Understand your requirements\n2. Generate search criteria\n3. Find relevant jobs\n4. Format results`,
-          },
-        ];
-      });
-      // Call the backend API as usual
-      const response = await fetch("http://localhost:5001/api/chat", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ message: userQuery }),
+        const n = prev.slice(0, -1);
+        return [...n, {
+          sender: "ai",
+          text: `🔍 Searching for "${userQuery}"...\n\nThis may take 30-60 seconds as I:\n1. Understand your requirements\n2. Generate search criteria\n3. Find relevant jobs\n4. Format results`,
+        }];
       });
 
+      const response = await fetch("http://localhost:5001/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: userQuery }),
+      });
       const data = await response.json();
 
       if (data.success) {
         if (Array.isArray(data.message)) {
           setMessages((prev) => {
-            // Remove the last 'searching' message, then add a placeholder for jobs
-            const newMessages = prev.slice(0, -1);
-            return [
-              ...newMessages,
-              { sender: "ai", text: `Job results for "${userQuery}":`, jobIndex: allJobMessages.length },
-            ];
+            const n = prev.slice(0, -1);
+            return [...n, { sender: "ai", text: `Job results for "${userQuery}":`, jobIndex: allJobMessages.length }];
           });
-          setAllJobMessages((prev) => [...prev, data.message]); // Append new job search results
+          setAllJobMessages((prev) => [...prev, data.message]);
         } else {
-          setMessages((prev) => {
-            const newMessages = prev.slice(0, -1);
-            return [
-              ...newMessages,
-              { sender: "ai", text: data.message },
-            ];
-          });
+          setMessages((prev) => { const n = prev.slice(0, -1); return [...n, { sender: "ai", text: data.message }]; });
         }
       } else {
-        setMessages((prev) => [
-          ...prev,
-          {
-            sender: "ai",
-            text: `❌ Error: ${data.message || "Something went wrong. Please try again."}`,
-          },
-        ]);
+        setMessages((prev) => [...prev, { sender: "ai", text: `❌ Error: ${data.message || "Something went wrong. Please try again."}` }]);
       }
-    } catch (error) {
-      console.error("Error calling API:", error);
-      setMessages((prev) => [
-        ...prev,
-        {
-          sender: "ai",
-          text: "❌ Unable to connect to the job search service. Please make sure the backend server is running and try again.",
-        },
-      ]);
+    } catch {
+      setMessages((prev) => [...prev, { sender: "ai", text: "❌ Unable to connect to the job search service. Please make sure the backend server is running and try again." }]);
     } finally {
       setIsTyping(false);
     }
@@ -304,10 +334,8 @@ const JobAgent = () => {
 
   return (
     <div className="min-h-screen flex flex-col bg-[#0d1117] text-white">
-      {/* Chat Section */}
       <main className="flex-1 overflow-y-auto p-6 space-y-4">
         {messages.map((msg, index) => {
-          // If this message is a job result placeholder, render ProgressiveJobMessages for that search
           if (msg.jobIndex !== undefined) {
             return (
               <div key={index}>
@@ -316,20 +344,13 @@ const JobAgent = () => {
                     {msg.text}
                   </div>
                 </div>
-                <ProgressiveJobMessages
-                  jobMessages={allJobMessages[msg.jobIndex]}
-                  onApply={handleApplyClick}
-                />
+                <ProgressiveJobMessages jobMessages={allJobMessages[msg.jobIndex]} onApply={handleApplyClick} />
               </div>
             );
           }
+
           return (
-            <div
-              key={index}
-              className={`flex ${
-                msg.sender === "user" ? "justify-end" : "justify-start"
-              }`}
-            >
+            <div key={index} className={`flex ${msg.sender === "user" ? "justify-end" : "justify-start"}`}>
               <div
                 className={`max-w-[90%] break-normal whitespace-pre-line p-4 rounded-2xl ${
                   msg.sender === "user"
@@ -338,11 +359,22 @@ const JobAgent = () => {
                 }`}
               >
                 {msg.text}
+                {/* Render multi-select checkbox UI if this message is a checkbox prompt */}
+                {msg.checkboxQuestion &&
+                  msg.checkboxQuestion.options?.length > 0 &&
+                  // Only show the interactive UI for the latest pending checkbox question
+                  pendingApplication?.awaitingCheckbox &&
+                  pendingApplication?.applicationId === msg.applicationId && (
+                    <CheckboxPrompt
+                      question={msg.checkboxQuestion}
+                      onSubmit={handleCheckboxConfirm}
+                    />
+                  )}
               </div>
             </div>
           );
         })}
-        {/* Typing Indicator */}
+
         {isTyping && (
           <div className="flex justify-start">
             <div className="bg-[#161b22] text-gray-400 px-4 py-2 rounded-2xl flex items-center gap-2 rounded-bl-none">
@@ -353,9 +385,9 @@ const JobAgent = () => {
             </div>
           </div>
         )}
+        <div ref={bottomRef} />
       </main>
 
-      {/* Input Section */}
       <form
         onSubmit={handleSend}
         className="p-4 bg-[#161b22] flex items-center gap-2 border-t border-gray-700"
@@ -364,7 +396,11 @@ const JobAgent = () => {
           type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="Type your message..."
+          placeholder={
+            pendingApplication?.awaitingCheckbox
+              ? "Select options above, or type manually (e.g. 1, 3)..."
+              : "Type your message..."
+          }
           className="flex-1 px-4 py-2 rounded-lg bg-[#0d1117] border border-gray-600 focus:outline-none focus:border-blue-500"
         />
         <button

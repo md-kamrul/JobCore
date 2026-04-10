@@ -45,6 +45,20 @@ def _is_block_fillable(block) -> bool:
     return input_type in {"text", "email", "textarea", "radio", "checkbox", "dropdown", "file"}
 
 
+def _has_question_heading(block) -> bool:
+    for sel in ("div[role='heading']", "span.M7eMe", "div.M7eMe", "div.Qr7Oae"):
+        try:
+            if block.find_elements(By.CSS_SELECTOR, sel):
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _norm_text(s: str) -> str:
+    return re.sub(r"\s+", " ", (s or "").strip().lower())
+
+
 def _scan_questions(driver) -> List[QuestionRef]:
     blocks = driver.find_elements(By.CSS_SELECTOR, "div[role='listitem']")
 
@@ -61,6 +75,14 @@ def _scan_questions(driver) -> List[QuestionRef]:
 
         required = _is_required(block)
         input_type, options = _detect_input_type(block)
+
+        # Some forms render each checkbox/radio option as a separate listitem.
+        # If the block lacks a heading and the "label" equals a single option,
+        # treat it as an option-only row, not a question.
+        if input_type in {"checkbox", "radio"} and options:
+            if not _has_question_heading(block):
+                if len(options) == 1 and _norm_text(label) == _norm_text(options[0]):
+                    continue
 
         occ = seen_count.get(label, 0)
         seen_count[label] = occ + 1
@@ -218,7 +240,11 @@ def next_prompt(questions: List[QuestionRef], index: int) -> Tuple[Optional[Ques
         for i, o in enumerate(opts, start=1):
             opt_lines.append(f"{i}. {o}")
         msg += "\nOptions:\n" + "\n".join(opt_lines)
-        msg += "\n\nReply with the option number (e.g. 1) or the option text."
+        if q.input_type == "checkbox":
+            msg += ("\n\nSelect one or more options by number or text, separated by commas or semicolons. "
+                     "(e.g. 1,3 or Option A; Option B)")
+        else:
+            msg += "\n\nReply with the option number (e.g. 1) or the option text."
     if q.input_type == "file":
         msg += "\nPlease send a local file path to upload."
 

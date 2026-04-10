@@ -234,8 +234,16 @@ def continue_apply():
                 'applyUrl': session.apply_url,
             })
 
-        user_answer = answers.get(current_q.label) or answers.get('default') or ''
-        user_answer = str(user_answer).strip()
+        user_answer_raw = answers.get(current_q.label)
+        if user_answer_raw is None:
+            user_answer_raw = answers.get('default')
+
+        # Checkbox answers may arrive as a list (multi-select). Convert to the comma-separated
+        # format expected by the Google Forms filler.
+        if isinstance(user_answer_raw, (list, tuple, set)):
+            user_answer = ", ".join([str(v).strip() for v in user_answer_raw if str(v).strip()])
+        else:
+            user_answer = str(user_answer_raw or "").strip()
         if not user_answer:
             # re-ask
             _, prompt = next_prompt(session.questions, session.index)
