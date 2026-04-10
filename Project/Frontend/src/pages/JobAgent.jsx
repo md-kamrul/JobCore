@@ -106,6 +106,56 @@ const JobAgent = () => {
     return msg;
   };
 
+  const normalizeOption = (value) => String(value || "").trim().toLowerCase();
+
+  const resolveSingleOption = (options, rawInput) => {
+    const input = String(rawInput || "").trim();
+    if (!input) return null;
+
+    const numMatch = input.match(/\b(\d{1,3})\b/);
+    if (numMatch) {
+      const idx = Number(numMatch[1]);
+      if (Number.isInteger(idx) && idx >= 1 && idx <= options.length) {
+        return options[idx - 1];
+      }
+    }
+
+    const exact = options.find((o) => normalizeOption(o) === normalizeOption(input));
+    if (exact) return exact;
+
+    const inputNorm = normalizeOption(input);
+    const containsMatches = options.filter((o) => {
+      const optNorm = normalizeOption(o);
+      return optNorm.includes(inputNorm) || inputNorm.includes(optNorm);
+    });
+    if (containsMatches.length === 1) return containsMatches[0];
+
+    return null;
+  };
+
+  const resolveMultiOptions = (options, rawInput) => {
+    const tokens = String(rawInput)
+      .split(/[,;/\n]+/)
+      .map((t) => t.trim())
+      .filter(Boolean);
+
+    const selected = [];
+    const invalidTokens = [];
+
+    for (const token of tokens) {
+      const resolved = resolveSingleOption(options, token);
+      if (!resolved) {
+        invalidTokens.push(token);
+        continue;
+      }
+      if (!selected.includes(resolved)) {
+        selected.push(resolved);
+      }
+    }
+
+    return { selected, invalidTokens };
+  };
+
   const buildUserProfileForApply = () => {
     const stored = (() => {
       try { return JSON.parse(localStorage.getItem("jobcore_profile") || "null"); }
@@ -241,30 +291,40 @@ const JobAgent = () => {
 
         const inputType = (first?.input_type || "").toLowerCase();
         let answerValue = userQuery;
+        const options = Array.isArray(first?.options) ? first.options : [];
+
+        const sendInvalidPrompt = () => {
+          const prompt = buildNeedsInfoPrompt(missing);
+          const invalidText = `Invalid option!!!${prompt ? `\n${prompt}` : ""}`;
+          setMessages((prev) => [...prev, { sender: "ai", text: invalidText }]);
+          setIsTyping(false);
+        };
+
+        if (options.length > 0 && ["radio", "dropdown", "checkbox"].includes(inputType)) {
+          if (inputType === "checkbox") {
+            const { selected, invalidTokens } = resolveMultiOptions(options, userQuery);
+            if (invalidTokens.length > 0 || selected.length === 0) {
+              sendInvalidPrompt();
+              return;
+            }
+            answerValue = selected;
+          } else {
+            const resolved = resolveSingleOption(options, userQuery);
+            if (!resolved) {
+              sendInvalidPrompt();
+              return;
+            }
+            answerValue = resolved;
+          }
+        }
 
         // If it's a checkbox (multi-select), allow users to type: "1, 3" or "Option A; Option B".
         if (inputType === "checkbox") {
-          const options = Array.isArray(first?.options) ? first.options : [];
-          const tokens = String(userQuery)
-            .split(/[,;/\n]+/)
-            .map((t) => t.trim())
-            .filter(Boolean);
-
-          const selected = [];
-          for (const t of tokens) {
-            const n = Number(t);
-            if (Number.isInteger(n) && n >= 1 && n <= options.length) {
-              selected.push(options[n - 1]);
-              continue;
-            }
-
-            // Try exact match against provided options (case-insensitive)
-            const exact = options.find((o) => String(o).trim().toLowerCase() === t.toLowerCase());
-            selected.push(exact ?? t);
-          }
-
           // Backend will join arrays; keep as array to preserve multi-select intent.
-          answerValue = selected.length > 0 ? selected : userQuery;
+          if (!Array.isArray(answerValue)) {
+            const { selected } = resolveMultiOptions(options, userQuery);
+            answerValue = selected.length > 0 ? selected : userQuery;
+          }
         }
 
         const answers = label ? { [label]: answerValue } : { default: answerValue };
