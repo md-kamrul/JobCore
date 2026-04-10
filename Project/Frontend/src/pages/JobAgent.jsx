@@ -13,6 +13,57 @@ const JobAgent = () => {
   const [allJobMessages, setAllJobMessages] = useState([]); // Store all job searches
   const [pendingApplication, setPendingApplication] = useState(null); // { applicationId, missing: [] }
 
+  const describeQuestionType = (inputType) => {
+    const t = (inputType || "").toLowerCase();
+    switch (t) {
+      case "text":
+        return "Short answer";
+      case "email":
+        return "Email";
+      case "textarea":
+        return "Paragraph";
+      case "radio":
+        return "Multiple choice (radio)";
+      case "checkbox":
+        return "Checkboxes (multiple select)";
+      case "dropdown":
+        return "Dropdown";
+      case "file":
+        return "File upload";
+      default:
+        return t ? `Unknown (${t})` : "Unknown";
+    }
+  };
+
+  const buildNeedsInfoPrompt = (missing) => {
+    if (!Array.isArray(missing) || missing.length === 0) return "";
+    const q = missing[0] || {};
+
+    const label = (q.label || "").trim() || "(Untitled question)";
+    const required = Boolean(q.required);
+    const typeLine = `Type: ${describeQuestionType(q.input_type)}`;
+
+    const options = Array.isArray(q.options)
+      ? q.options.map((o) => String(o || "").trim()).filter(Boolean)
+      : [];
+
+    let msg = `${label}${required ? " (required)" : ""}\n${typeLine}`;
+
+    if (options.length > 0) {
+      msg += `\nOptions:\n${options
+        .slice(0, 50)
+        .map((o, i) => `${i + 1}. ${o}`)
+        .join("\n")}`;
+      msg += "\n\nReply with the option number (e.g. 1) or the option text.";
+    }
+
+    if ((q.input_type || "").toLowerCase() === "file") {
+      msg += "\nPlease send a local file path to upload.";
+    }
+
+    return msg;
+  };
+
   const buildUserProfileForApply = () => {
     // Best-effort: use auth email + anything the app might have stored.
     const stored = (() => {
@@ -74,7 +125,17 @@ const JobAgent = () => {
 
         const applyData = await applyResp.json();
         if (applyData?.success) {
-          setMessages((prev) => [...prev, { sender: "ai", text: applyData.message }]);
+          const needsInfoPrompt = buildNeedsInfoPrompt(applyData?.missing);
+          setMessages((prev) => [
+            ...prev,
+            {
+              sender: "ai",
+              text:
+                applyData?.status === "needs_info" && needsInfoPrompt
+                  ? needsInfoPrompt
+                  : applyData.message,
+            },
+          ]);
           if (applyData?.status === "needs_info" && applyData?.applicationId) {
             setPendingApplication({ applicationId: applyData.applicationId, missing: applyData.missing || [] });
           } else {
@@ -125,7 +186,17 @@ const JobAgent = () => {
         const data = await resp.json();
 
         if (data?.success) {
-          setMessages((prev) => [...prev, { sender: "ai", text: data.message }]);
+          const needsInfoPrompt = buildNeedsInfoPrompt(data?.missing);
+          setMessages((prev) => [
+            ...prev,
+            {
+              sender: "ai",
+              text:
+                data?.status === "needs_info" && needsInfoPrompt
+                  ? needsInfoPrompt
+                  : data.message,
+            },
+          ]);
           if (data?.status === "needs_info") {
             setPendingApplication({ applicationId: pendingApplication.applicationId, missing: data.missing || [] });
           } else {

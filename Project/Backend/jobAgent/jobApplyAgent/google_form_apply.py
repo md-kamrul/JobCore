@@ -84,6 +84,38 @@ def _text(el) -> str:
         return ""
 
 
+def _choice_text(el) -> str:
+    """Best-effort extraction of choice label text for radio/checkbox options."""
+    # 1) Direct visible text
+    t = _text(el)
+    if t:
+        return t
+
+    # 2) aria-label often carries the option text
+    try:
+        aria = (el.get_attribute("aria-label") or "").strip()
+        if aria:
+            return aria
+    except Exception:
+        pass
+
+    # 3) Fallback: scan descendants for any non-empty text
+    try:
+        parts = []
+        for child in el.find_elements(By.CSS_SELECTOR, "span, div"):
+            ct = _text(child)
+            if ct:
+                parts.append(ct)
+        if parts:
+            # pick the most informative chunk
+            parts.sort(key=len, reverse=True)
+            return parts[0]
+    except Exception:
+        pass
+
+    return ""
+
+
 def _find_question_title(block) -> str:
     for sel in ("div[role='heading']", "span.M7eMe", "div.M7eMe", "div.Qr7Oae"):
         try:
@@ -136,14 +168,19 @@ def _detect_input_type(block) -> Tuple[str, List[str]]:
 
     radios = block.find_elements(By.CSS_SELECTOR, "div[role='radio']")
     if radios:
-        options = [(_text(r) or "").strip() for r in radios]
-        options = [o for o in options if o]
+        options = [_choice_text(r) for r in radios]
+        options = [o.strip() for o in options if (o or "").strip()]
+        # de-dupe while preserving order
+        seen = set()
+        options = [o for o in options if not (o in seen or seen.add(o))]
         return "radio", options
 
     checkboxes = block.find_elements(By.CSS_SELECTOR, "div[role='checkbox']")
     if checkboxes:
-        options = [(_text(c) or "").strip() for c in checkboxes]
-        options = [o for o in options if o]
+        options = [_choice_text(c) for c in checkboxes]
+        options = [o.strip() for o in options if (o or "").strip()]
+        seen = set()
+        options = [o for o in options if not (o in seen or seen.add(o))]
         return "checkbox", options
 
     if block.find_elements(By.CSS_SELECTOR, "div[role='listbox']"):
