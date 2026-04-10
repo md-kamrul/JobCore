@@ -211,8 +211,14 @@ def next_prompt(questions: List[QuestionRef], index: int) -> Tuple[Optional[Ques
     msg = f"{q.label}"
     if q.required:
         msg += " (required)"
+    # If there are explicit options (radio/checkbox/dropdown), show them as a numbered list
     if q.options:
-        msg += "\nOptions: " + ", ".join(q.options[:12])
+        opts = q.options[:50]
+        opt_lines = []
+        for i, o in enumerate(opts, start=1):
+            opt_lines.append(f"{i}. {o}")
+        msg += "\nOptions:\n" + "\n".join(opt_lines)
+        msg += "\n\nReply with the option number (e.g. 1) or the option text."
     if q.input_type == "file":
         msg += "\nPlease send a local file path to upload."
 

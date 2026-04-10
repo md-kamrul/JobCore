@@ -3,20 +3,19 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { AuthContext } from "../provider/AuthProvider";
 
 export default function LoginPageDesign() {
-
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
-  const { signIn } = useContext(AuthContext);
+  const { loginUser } = useContext(AuthContext);
   const navigate = useNavigate();
   const location = useLocation();
 
   const handleLogin = (e) => {
     e.preventDefault();
 
-    signIn(email, password)
+    loginUser(email, password)
       .then((result) => {
-        const loggedUser = result.user;
+        const loggedUser = result.data?.user || result.user;
         console.log(loggedUser);
 
         const from = location.state?.from?.pathname || "/";
@@ -25,7 +24,6 @@ export default function LoginPageDesign() {
       .catch((error) => {
         console.log("Error during sign-in:", error.message);
       });
-
   };
 
   return (
@@ -78,7 +76,6 @@ export default function LoginPageDesign() {
           <hr className="flex-grow border-gray-600" />
         </div>
 
-        {/* Google Login Button */}
         <button className="w-full flex items-center justify-center gap-2 bg-[#0d1117] border border-gray-600 py-2 rounded-lg hover:bg-gray-800 transition">
           <i className="fa fa-google"></i> Continue with Google
         </button>

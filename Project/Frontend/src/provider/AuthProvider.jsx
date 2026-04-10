@@ -1,53 +1,52 @@
-import React, { createContext, useEffect, useState } from 'react';
-import { createUserWithEmailAndPassword, getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut } from "firebase/auth";
-import { app } from '../firebase/Firebase.config';
+import { createContext, useEffect, useState } from 'react';
+import { supabase } from '../lib/supabaseClient';
 
 export const AuthContext = createContext(null);
-const auth = getAuth(app);
 
-const AuthProvider = ({ children }) => {
+export default function AuthProvider({ children }) {
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
 
-    const [user, setUser] = useState(null);
-    const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    // Get initial session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user ?? null);
+      setLoading(false);
+    });
 
-    const createUser = (email, password) => {
-        setLoading(true);
-        return createUserWithEmailAndPassword(auth, email, password);
-    }
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+    });
 
-    const signIn = (email, password) => {
-        setLoading(true);
-        return signInWithEmailAndPassword(auth, email, password);
-    }
+    return () => subscription.unsubscribe();
+  }, []);
 
-    const logOut = () => {
-        setLoading(true);
-        return signOut(auth);
-    }
+  const createUser = (email, password, fullName) => {
+    return supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: { full_name: fullName }
+      }
+    });
+  };
 
-    useEffect(() => {
-        const unSubscribe = onAuthStateChanged(auth, currentUser => {
-            setUser(currentUser);
-            setLoading(false);
-        });
-        return () => {
-            unSubscribe();
-        }
-    }, []);
+  const loginUser = (email, password) => {
+    return supabase.auth.signInWithPassword({ email, password });
+  };
 
-    const authInfo = {
-        user,
-        loading,
-        createUser,
-        signIn,
-        logOut
-    };
+  const loginWithGoogle = () => {
+    return supabase.auth.signInWithOAuth({ provider: 'google' });
+  };
 
-    return (
-        <AuthContext.Provider value={authInfo}>
-            {children}
-        </AuthContext.Provider>
-    );
-};
+  const logoutUser = () => {
+    return supabase.auth.signOut();
+  };
 
-export { AuthProvider };
+  return (
+    <AuthContext.Provider value={{ user, loading, createUser, loginUser, loginWithGoogle, logoutUser }}>
+      {!loading && children}
+    </AuthContext.Provider>
+  );
+}

@@ -158,6 +158,22 @@ def _pick_best_option(options: List[str], answer: str) -> Optional[str]:
 
     a = answer.strip().lower()
 
+    # numeric selection: '1' or '1.' or 'option 1' -> map to option index
+    m = re.search(r"\b(\d{1,3})\b", a)
+    if m:
+        try:
+            idx = int(m.group(1))
+            if 1 <= idx <= len(options):
+                return options[idx - 1]
+        except Exception:
+            pass
+
+    # single-letter selection: 'a' -> 1, 'b' -> 2
+    if len(a) == 1 and a.isalpha():
+        idx = ord(a.lower()) - ord("a") + 1
+        if 1 <= idx <= len(options):
+            return options[idx - 1]
+
     # exact / case-insensitive
     for o in options:
         if o.strip().lower() == a:
