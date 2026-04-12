@@ -234,6 +234,338 @@ def _pick_best_option(options: List[str], answer: str) -> Optional[str]:
     return best if best_score > 0 else None
 
 
+def _is_placeholder_option(text: str) -> bool:
+    t = re.sub(r"\s+", " ", (text or "").strip().lower())
+    if not t:
+        return True
+    if t in {
+        "select",
+        "select an option",
+        "choose",
+        "choose an option",
+        "please select",
+        "pick one",
+        "option",
+        "--",
+    }:
+        return True
+
+    # Common Bengali placeholders seen in forms, e.g. "বাছুন (select)"
+    if "বাছুন" in t or "নির্বাচন করুন" in t:
+        return True
+
+    # Placeholder variants that include helper words in parenthesis.
+    cleaned = re.sub(r"\(.*?\)", "", t).strip()
+    if cleaned in {"select", "choose", "select option", "choose option"}:
+        return True
+
+    return False
+
+
+def _ensure_listbox_open(listbox, driver: webdriver.Chrome) -> None:
+    """Ensure listbox popup is open and focused."""
+    _safe_click(driver, listbox)
+    try:
+        expanded = (listbox.get_attribute("aria-expanded") or "").strip().lower()
+    except Exception:
+        expanded = ""
+
+    if expanded == "true":
+        return
+
+    for key in (Keys.ENTER, Keys.SPACE, Keys.ARROW_DOWN):
+        try:
+            listbox.send_keys(key)
+            expanded = (listbox.get_attribute("aria-expanded") or "").strip().lower()
+            if expanded == "true":
+                return
+        except Exception:
+            continue
+
+
+def _options_from_listbox_popup(listbox, driver: webdriver.Chrome, *, include_hidden: bool) -> List[Any]:
+    """Read option elements from popup container linked to this listbox only."""
+    popup_ids = []
+    for attr in ("aria-controls", "aria-owns"):
+        try:
+            raw = (listbox.get_attribute(attr) or "").strip()
+        except Exception:
+            raw = ""
+        if raw:
+            popup_ids.extend([p.strip() for p in raw.split() if p.strip()])
+
+    for popup_id in popup_ids:
+        try:
+            container = driver.find_element(By.ID, popup_id)
+        except Exception:
+            continue
+
+        opts = container.find_elements(By.CSS_SELECTOR, "div[role='option'], li[role='option']")
+        if not include_hidden:
+            visible_opts = []
+            for o in opts:
+                try:
+                    if o.is_displayed():
+                        visible_opts.append(o)
+                except Exception:
+                    continue
+            opts = visible_opts
+
+        if opts:
+            return opts
+
+    return []
+
+
+def _class_based_dropdown_rows(listbox, driver: webdriver.Chrome, *, include_hidden: bool) -> List[Tuple[str, Any]]:
+    """Extract dropdown option rows from known Google Forms class structure.
+
+    Some forms expose option text inside elements with classes:
+      OA0qNb ncFHed QXL7Te
+    """
+    containers: List[Any] = []
+
+    # Prefer popup containers linked to the active listbox.
+    for attr in ("aria-controls", "aria-owns"):
+        try:
+            raw = (listbox.get_attribute(attr) or "").strip()
+        except Exception:
+            raw = ""
+        if not raw:
+            continue
+        for popup_id in [p.strip() for p in raw.split() if p.strip()]:
+            try:
+                containers.append(driver.find_element(By.ID, popup_id))
+            except Exception:
+                continue
+
+    # Fallback to whole page search if popup linkage is missing.
+    if not containers:
+        containers = [driver]
+
+    rows: List[Tuple[str, Any]] = []
+    seen = set()
+    selectors = (
+        ".OA0qNb.ncFHed.QXL7Te",
+        "div.OA0qNb.ncFHed.QXL7Te",
+        "span.OA0qNb.ncFHed.QXL7Te",
+    )
+
+    for container in containers:
+        for sel in selectors:
+            try:
+                candidates = container.find_elements(By.CSS_SELECTOR, sel)
+            except Exception:
+                candidates = []
+
+            for c in candidates:
+                if not include_hidden:
+                    try:
+                        if not c.is_displayed():
+                            continue
+                    except Exception:
+                        continue
+
+                label = (_choice_text(c) or _text(c) or "").strip()
+                if not label:
+                    continue
+
+                # Resolve clickable option container (role=option) when possible.
+                click_target = c
+                try:
+                    role = (c.get_attribute("role") or "").strip().lower()
+                except Exception:
+                    role = ""
+
+                if role != "option":
+                    try:
+                        click_target = c.find_element(By.XPATH, "./ancestor::*[@role='option'][1]")
+                    except Exception:
+                        click_target = c
+
+                key = label.lower()
+                if key in seen:
+                    continue
+                seen.add(key)
+                rows.append((label, click_target))
+
+    return rows
+
+
+def _read_open_dropdown_options(
+    driver: webdriver.Chrome,
+    wait: WebDriverWait,
+    *,
+    include_hidden: bool = False,
+    listbox=None,
+):
+    def _visible_overlay_options(drv):
+        # Prefer popup options tied to this listbox.
+        scoped = _options_from_listbox_popup(listbox, drv, include_hidden=False) if listbox is not None else []
+        if scoped:
+            return scoped
+
+        # Fallback: any visible option on page.
+        opts = drv.find_elements(By.CSS_SELECTOR, "div[role='option'], li[role='option']")
+        visible = []
+        for o in opts:
+            try:
+                if o.is_displayed():
+                    visible.append(o)
+            except Exception:
+                continue
+        return visible if visible else False
+
+    # Make sure dropdown overlay is actually open.
+    wait.until(_visible_overlay_options)
+
+    options = []
+    if listbox is not None:
+        options = _options_from_listbox_popup(listbox, driver, include_hidden=include_hidden)
+
+    if not options:
+        all_opts = driver.find_elements(By.CSS_SELECTOR, "div[role='option'], li[role='option']")
+        if include_hidden:
+            options = all_opts
+        else:
+            options = []
+            for o in all_opts:
+                try:
+                    if o.is_displayed():
+                        options.append(o)
+                except Exception:
+                    continue
+
+    rows = []
+    for o in options or []:
+        label = _choice_text(o) or _text(o)
+        label = (label or "").strip()
+        if label:
+            rows.append((label, o))
+
+    seen = set()
+    dedup = []
+    for label, el in rows:
+        key = label.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        dedup.append((label, el))
+
+    # Class-based fallback for forms that render option text with OA0qNb ncFHed QXL7Te.
+    class_rows = _class_based_dropdown_rows(listbox, driver, include_hidden=include_hidden) if listbox is not None else []
+    if class_rows:
+        existing = {label.lower() for label, _ in dedup}
+        for label, el in class_rows:
+            if label.lower() in existing:
+                continue
+            dedup.append((label, el))
+            existing.add(label.lower())
+
+    return dedup
+
+
+def _peek_dropdown_options(block, wait: WebDriverWait, driver: webdriver.Chrome) -> List[str]:
+    """Open dropdown and return all option labels for chat prompting."""
+    try:
+        listbox = _first_visible(block, "div[role='listbox']")
+        _ensure_listbox_open(listbox, driver)
+
+        visible_rows = _read_open_dropdown_options(driver, wait, include_hidden=False, listbox=listbox)
+        visible_labels = [label for label, _ in visible_rows]
+        visible_non_placeholder = [label for label in visible_labels if not _is_placeholder_option(label)]
+
+        # If visible list is placeholder-only, fetch all DOM options as fallback.
+        labels = visible_labels
+        if not visible_non_placeholder:
+            all_rows = _read_open_dropdown_options(driver, wait, include_hidden=True, listbox=listbox)
+            all_labels = [label for label, _ in all_rows]
+            if all_labels:
+                labels = all_labels
+
+        # Some Google Forms lazily materialize options; when scraping still yields
+        # only placeholder/one item, enumerate options via keyboard navigation.
+        non_placeholder = [label for label in labels if not _is_placeholder_option(label)]
+        if len(non_placeholder) <= 1:
+            nav_labels = _collect_dropdown_options_by_navigation(listbox, driver)
+            if nav_labels:
+                labels = nav_labels
+
+        try:
+            listbox.send_keys(Keys.ESCAPE)
+        except Exception:
+            pass
+
+        filtered_labels = [label for label in labels if not _is_placeholder_option(label)]
+        # Chat should present only actionable options in serial order.
+        return filtered_labels or labels
+    except Exception:
+        return []
+
+
+def _active_dropdown_option_text(listbox, driver: webdriver.Chrome) -> str:
+    """Return current active option label from aria-activedescendant when available."""
+    try:
+        active_id = (listbox.get_attribute("aria-activedescendant") or "").strip()
+        if not active_id:
+            return ""
+        active_el = driver.find_element(By.ID, active_id)
+        label = _choice_text(active_el) or _text(active_el)
+        if label:
+            return label.strip()
+        data_value = (active_el.get_attribute("data-value") or "").strip()
+        return data_value
+    except Exception:
+        return ""
+
+
+def _collect_dropdown_options_by_navigation(listbox, driver: webdriver.Chrome, *, max_steps: int = 120) -> List[str]:
+    """Enumerate dropdown options by keyboard navigation (fallback for lazy-rendered menus)."""
+    labels: List[str] = []
+    seen = set()
+
+    def _add(label: str) -> None:
+        t = (label or "").strip()
+        if not t:
+            return
+        key = t.lower()
+        if key in seen:
+            return
+        seen.add(key)
+        labels.append(t)
+
+    try:
+        _safe_click(driver, listbox)
+        try:
+            listbox.send_keys(Keys.HOME)
+        except Exception:
+            pass
+
+        # Capture currently focused option if present.
+        _add(_active_dropdown_option_text(listbox, driver))
+
+        stale_hits = 0
+        for _ in range(max_steps):
+            listbox.send_keys(Keys.ARROW_DOWN)
+            current = _active_dropdown_option_text(listbox, driver)
+            if not current:
+                continue
+            before = len(labels)
+            _add(current)
+            if len(labels) == before:
+                stale_hits += 1
+            else:
+                stale_hits = 0
+
+            # If we've moved through a cycle without finding new options, stop.
+            if stale_hits >= 8 and len(labels) > 1:
+                break
+    except Exception:
+        return labels
+
+    return labels
+
+
 def _is_interactable(el) -> bool:
     try:
         if not el.is_displayed():
@@ -521,27 +853,33 @@ def _fill_block(
 
     if input_type == "dropdown":
         listbox = _first_visible(block, "div[role='listbox']")
-        _safe_click(driver, listbox)
+        _ensure_listbox_open(listbox, driver)
 
-        def _visible_overlay_options(drv):
-            opts = drv.find_elements(By.CSS_SELECTOR, "div[role='option']")
-            visible = []
-            for o in opts:
-                try:
-                    if o.is_displayed():
-                        visible.append(o)
-                except Exception:
-                    continue
-            return visible if visible else False
+        visible_rows = _read_open_dropdown_options(driver, wait, include_hidden=False, listbox=listbox)
+        all_rows = _read_open_dropdown_options(driver, wait, include_hidden=True, listbox=listbox)
+        rows = all_rows or visible_rows
+        actionable_rows = [(label, el) for label, el in rows if not _is_placeholder_option(label)] or rows
+        labels = [label for label, _ in actionable_rows]
+        best_text = _pick_best_option([t for t in labels if t], value)
 
-        overlay_options = wait.until(_visible_overlay_options)
-        texts = [_text(o) for o in overlay_options]
-        best_text = _pick_best_option([t for t in texts if t], value)
-        for o in overlay_options:
-            if best_text and _text(o).strip().lower() == best_text.strip().lower():
-                _safe_click(driver, o)
+        for label_text, opt_el in actionable_rows:
+            if best_text and label_text.strip().lower() == best_text.strip().lower():
+                _safe_click(driver, opt_el)
                 return
-        _safe_click(driver, overlay_options[0])
+
+        m = re.search(r"\b(\d{1,3})\b", str(value or ""))
+        if m:
+            try:
+                idx = int(m.group(1))
+                if 1 <= idx <= len(actionable_rows):
+                    _safe_click(driver, actionable_rows[idx - 1][1])
+                    return
+            except Exception:
+                pass
+
+        # Default only when value is empty.
+        if not str(value or "").strip() and actionable_rows:
+            _safe_click(driver, actionable_rows[0][1])
         return
 
 
@@ -614,6 +952,9 @@ def apply_google_form(
 
                 required = _is_required(block)
                 input_type, options = _detect_input_type(block)
+
+                if input_type == "dropdown" and not options:
+                    options = _peek_dropdown_options(block, wait, driver)
 
                 value = resolve_answer(label, normalized_profile, extra_answers)
 

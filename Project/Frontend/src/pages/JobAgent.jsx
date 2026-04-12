@@ -376,6 +376,14 @@ const JobAgent = () => {
         });
         const applyData = await applyResp.json();
         handleApplyResponse(applyData);
+      } else if (data?.success && data?.applyUrl && !data?.isGoogleForm) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            sender: "ai",
+            text: "We are in the demo version. We are now able to automate the Google Form ONLY.",
+          },
+        ]);
       }
     } catch {
       setMessages((prev) =>

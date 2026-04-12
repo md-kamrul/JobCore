@@ -17,6 +17,7 @@ from .google_form_apply import (
     _find_question_title,
     _is_required,
     _make_driver,
+    _peek_dropdown_options,
     is_google_form_url,
     resolve_final_url,
 )
@@ -59,7 +60,7 @@ def _norm_text(s: str) -> str:
     return re.sub(r"\s+", " ", (s or "").strip().lower())
 
 
-def _scan_questions(driver) -> List[QuestionRef]:
+def _scan_questions(driver, wait: Optional[WebDriverWait] = None) -> List[QuestionRef]:
     blocks = driver.find_elements(By.CSS_SELECTOR, "div[role='listitem']")
 
     seen_count: Dict[str, int] = {}
@@ -75,6 +76,9 @@ def _scan_questions(driver) -> List[QuestionRef]:
 
         required = _is_required(block)
         input_type, options = _detect_input_type(block)
+
+        if input_type == "dropdown" and not options and wait is not None:
+            options = _peek_dropdown_options(block, wait, driver)
 
         # Some forms render each checkbox/radio option as a separate listitem.
         # If the block lacks a heading and the "label" equals a single option,
@@ -217,7 +221,7 @@ def start_interactive_session(apply_url: str, *, headless: bool = True, timeout_
 
     wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div[role='listitem']")))
 
-    questions = _scan_questions(driver)
+    questions = _scan_questions(driver, wait)
     if not questions:
         driver.quit()
         return {"ok": False, "error": "no_questions", "message": "Could not find any fillable questions on the form.", "finalUrl": final_url}
@@ -235,7 +239,7 @@ def next_prompt(questions: List[QuestionRef], index: int) -> Tuple[Optional[Ques
         msg += " (required)"
     # If there are explicit options (radio/checkbox/dropdown), show them as a numbered list
     if q.options:
-        opts = q.options[:50]
+        opts = q.options
         opt_lines = []
         for i, o in enumerate(opts, start=1):
             opt_lines.append(f"{i}. {o}")
@@ -318,7 +322,7 @@ def answer_current_and_advance(
 
     # Wait for next page and rescan
     WebDriverWait(driver, timeout_s).until(EC.presence_of_element_located((By.CSS_SELECTOR, "div[role='listitem']")))
-    new_questions = _scan_questions(driver)
+    new_questions = _scan_questions(driver, wait)
     if not new_questions:
         return {"status": "error", "message": "Could not find questions on the next page."}
 
