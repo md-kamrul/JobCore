@@ -73,11 +73,72 @@ const JobAgent = () => {
   const [allJobMessages, setAllJobMessages] = useState([]);
   // pendingApplication: { applicationId, missing: [], awaitingCheckbox: bool, awaitingConfirm: bool, suggestedAnswer: any }
   const [pendingApplication, setPendingApplication] = useState(null);
+  // Gmail login modal state
+  const [gmailModal, setGmailModal] = useState({ show: false, applicationId: null, polling: false });
+  const gmailPollRef = useRef(null);
   const bottomRef = useRef(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isTyping]);
+
+  // ── Stop Gmail login polling ──
+  const stopGmailPoll = () => {
+    if (gmailPollRef.current) {
+      clearInterval(gmailPollRef.current);
+      gmailPollRef.current = null;
+    }
+  };
+
+  // ── Cancel Gmail login modal ──
+  const handleGmailLoginCancel = () => {
+    stopGmailPoll();
+    setGmailModal({ show: false, applicationId: null, polling: false });
+    setIsTyping(false);
+    setMessages((prev) => [
+      ...prev,
+      { sender: "ai", text: "Gmail login cancelled. You can try applying again when ready." },
+    ]);
+  };
+
+  // ── Poll backend until user completes Gmail login ──
+  const startGmailLoginPolling = (applicationId) => {
+    setGmailModal({ show: true, applicationId, polling: true });
+    stopGmailPoll();
+    gmailPollRef.current = setInterval(async () => {
+      try {
+        const resp = await fetch(
+          `http://localhost:5001/api/apply/gmail-login/status?applicationId=${applicationId}`
+        );
+        const data = await resp.json();
+
+        if (!data.success) {
+          stopGmailPoll();
+          setGmailModal({ show: false, applicationId: null, polling: false });
+          setIsTyping(false);
+          setMessages((prev) => [
+            ...prev,
+            { sender: "ai", text: `❌ ${data.message || "Gmail login session lost."}` },
+          ]);
+          return;
+        }
+
+        if (data.status === "awaiting_login") return; // still waiting
+
+        // Login done & form loaded – close modal and drive the form
+        stopGmailPoll();
+        setGmailModal({ show: false, applicationId: null, polling: false });
+        setMessages((prev) => [
+          ...prev,
+          { sender: "ai", text: "✅ Gmail login successful! Starting form automation..." },
+        ]);
+        handleApplyResponse(data);
+        setIsTyping(false);
+      } catch {
+        // Network hiccup — keep polling
+      }
+    }, 2000);
+  };
 
   const describeQuestionType = (inputType) => {
     const t = (inputType || "").toLowerCase();
@@ -367,15 +428,33 @@ const JobAgent = () => {
       setMessages((prev) => prev.map((m) => (m.id === placeholderId ? { ...m, text: messageText } : m)));
 
       if (data?.success && data?.applyUrl && data?.isGoogleForm) {
-        setMessages((prev) => [...prev, { sender: "ai", text: "I am starting to apply the job. Please bear with me..." }]);
+        setMessages((prev) => [...prev, { sender: "ai", text: "🔐 Opening Gmail login window... Please log in to continue the application." }]);
         const profile = await buildUserProfileForApply();
-        const applyResp = await fetch("http://localhost:5001/api/apply/start", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ applyUrl: data.applyUrl, profile, headless: false }),
-        });
-        const applyData = await applyResp.json();
-        handleApplyResponse(applyData);
+
+        // Step 1: Open Gmail login browser
+        let loginData;
+        try {
+          const loginResp = await fetch("http://localhost:5001/api/apply/gmail-login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ applyUrl: data.applyUrl, profile }),
+          });
+          loginData = await loginResp.json();
+        } catch {
+          setMessages((prev) => [...prev, { sender: "ai", text: "❌ Could not open Gmail login. Please make sure the backend is running." }]);
+          setIsTyping(false);
+          return;
+        }
+
+        if (!loginData?.success) {
+          setMessages((prev) => [...prev, { sender: "ai", text: `❌ ${loginData?.message || "Could not open Gmail login."}` }]);
+          setIsTyping(false);
+          return;
+        }
+
+        // Step 2: Show modal and start polling
+        startGmailLoginPolling(loginData.applicationId);
+        // isTyping stays true while polling — modal provides UI feedback
       } else if (data?.success && data?.applyUrl && !data?.isGoogleForm) {
         setMessages((prev) => [
           ...prev,
@@ -386,6 +465,8 @@ const JobAgent = () => {
         ]);
       }
     } catch {
+      stopGmailPoll();
+      setGmailModal({ show: false, applicationId: null, polling: false });
       setMessages((prev) =>
         prev.map((m) =>
           m.id === placeholderId
@@ -518,6 +599,50 @@ const JobAgent = () => {
 
   return (
     <div className="min-h-screen flex flex-col bg-[#0d1117] text-white">
+
+      {/* ── Gmail Login Modal ── */}
+      {gmailModal.show && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+          <div className="bg-[#161b22] border border-gray-700 rounded-2xl p-8 max-w-md w-full mx-4 shadow-2xl text-center">
+            <div className="flex justify-center mb-4">
+              <svg viewBox="0 0 48 48" width="52" height="52">
+                <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+                <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+                <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+                <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.18 1.48-4.97 2.31-8.16 2.31-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+              </svg>
+            </div>
+            <h2 className="text-xl font-semibold text-white mb-2">Sign in to Google</h2>
+            <p className="text-gray-400 text-sm mb-6 leading-relaxed">
+              A browser window has opened.<br/>
+              Please sign in with your Gmail account to continue the application.
+            </p>
+            <div className="flex items-center justify-center gap-2 mb-6">
+              <span className="w-2 h-2 bg-blue-400 rounded-full animate-bounce [animation-delay:-0.3s]"></span>
+              <span className="w-2 h-2 bg-blue-400 rounded-full animate-bounce [animation-delay:-0.15s]"></span>
+              <span className="w-2 h-2 bg-blue-400 rounded-full animate-bounce"></span>
+              <span className="text-sm text-gray-400 ml-2">Waiting for login...</span>
+            </div>
+            <div className="bg-[#0d1117] border border-gray-700 rounded-lg px-4 py-3 mb-6 text-left">
+              <p className="text-xs text-gray-500 mb-1">Instructions</p>
+              <ol className="text-sm text-gray-300 space-y-1 list-decimal list-inside">
+                <li>Enter your Gmail address in the browser</li>
+                <li>Enter your password when prompted</li>
+                <li>Complete any 2FA if required</li>
+                <li>This modal will close automatically once signed in</li>
+              </ol>
+            </div>
+            <button
+              type="button"
+              onClick={handleGmailLoginCancel}
+              className="w-full px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg text-sm font-semibold transition"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
       <main className="flex-1 overflow-y-auto p-6 space-y-4">
         {messages.map((msg, index) => {
           if (msg.jobIndex !== undefined) {
@@ -532,7 +657,6 @@ const JobAgent = () => {
               </div>
             );
           }
-
           return (
             <div key={index} className={`flex ${msg.sender === "user" ? "justify-end" : "justify-start"}`}>
               <div
@@ -552,10 +676,8 @@ const JobAgent = () => {
                       onEdit={handleEditSuggested}
                     />
                   )}
-                {/* Render multi-select checkbox UI if this message is a checkbox prompt */}
                 {msg.checkboxQuestion &&
                   msg.checkboxQuestion.options?.length > 0 &&
-                  // Only show the interactive UI for the latest pending checkbox question
                   pendingApplication?.awaitingCheckbox &&
                   pendingApplication?.applicationId === msg.applicationId && (
                     <CheckboxPrompt

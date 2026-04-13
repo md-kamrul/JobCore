@@ -18,6 +18,8 @@ class ApplicationSession:
     wait: Any = None
     questions: Any = None
     index: int = 0
+    # Remote-debug port used by the real Chrome process (for reconnection)
+    debug_port: int = 0
 
 
 _LOCK = Lock()
@@ -60,9 +62,21 @@ def delete_session(application_id: str) -> None:
     with _LOCK:
         session = _SESSIONS.pop(application_id, None)
 
-    # Always attempt to close selenium driver outside the lock
-    try:
-        if session and session.driver:
-            session.driver.quit()
-    except Exception:
-        pass
+    # Close Selenium connection and terminate the real Chrome subprocess
+    if session:
+        try:
+            if session.driver:
+                # Grab the subprocess handle before quitting the driver
+                proc = getattr(session.driver, "_chrome_proc", None)
+                try:
+                    session.driver.quit()
+                except Exception:
+                    pass
+                # Terminate the real Chrome process we launched
+                if proc is not None:
+                    try:
+                        proc.terminate()
+                    except Exception:
+                        pass
+        except Exception:
+            pass

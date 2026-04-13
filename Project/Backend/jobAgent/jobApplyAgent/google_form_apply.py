@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
+import shutil
+import socket
+import subprocess
+import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
@@ -22,6 +27,19 @@ from selenium.webdriver.support.ui import WebDriverWait
 from .profile_resolver import normalize_profile, resolve_answer
 
 logger = logging.getLogger(__name__)
+
+# ── Persistent Chrome profile used for Gmail login ───────────────────────────
+# Stored in the user's home so cookies/session survive across restarts.
+_JOBCORE_PROFILE_DIR = os.path.expanduser("~/.jobcore_chrome_profile")
+
+# macOS Chrome locations (tried in order)
+_CHROME_PATHS_MAC = [
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    "/usr/bin/google-chrome",
+    "/usr/bin/chromium-browser",
+    "/usr/bin/chromium",
+]
 
 
 @dataclass(frozen=True)
@@ -60,7 +78,28 @@ def resolve_final_url(url: str, *, timeout_s: int = 15) -> str:
         return url
 
 
+def _find_chrome_binary() -> str:
+    """Return path to the system Chrome/Chromium binary."""
+    for path in _CHROME_PATHS_MAC:
+        if os.path.isfile(path):
+            return path
+    found = shutil.which("google-chrome") or shutil.which("chromium") or shutil.which("chromium-browser")
+    if found:
+        return found
+    raise FileNotFoundError(
+        "Could not find Chrome or Chromium. Please install Google Chrome."
+    )
+
+
+def _free_port() -> int:
+    """Return a free TCP port on localhost."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
 def _make_driver(*, headless: bool = True) -> webdriver.Chrome:
+    """Standard Selenium driver — used for Google Forms (no Gmail login needed)."""
     options = webdriver.ChromeOptions()
     if headless:
         options.add_argument("--headless=new")
@@ -69,12 +108,91 @@ def _make_driver(*, headless: bool = True) -> webdriver.Chrome:
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--lang=en-US")
-
+    options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    options.add_experimental_option("useAutomationExtension", False)
     try:
-        return webdriver.Chrome(options=options)
+        driver = webdriver.Chrome(options=options)
+        driver.execute_cdp_cmd(
+            "Page.addScriptToEvaluateOnNewDocument",
+            {"source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"},
+        )
+        return driver
     except WebDriverException as exc:
         logger.error("Failed to start Chrome WebDriver: %s", exc)
         raise
+
+
+def _make_stealth_driver(*, headless: bool = False):
+    """
+    Launch the REAL system Chrome via subprocess with remote debugging,
+    then attach Selenium to it via debuggerAddress.
+
+    Returns (driver, port, proc) so callers can store the port for reconnection.
+    The Chrome process is accessible via driver._chrome_proc.
+    """
+    chrome_bin = _find_chrome_binary()
+    port = _free_port()
+    os.makedirs(_JOBCORE_PROFILE_DIR, exist_ok=True)
+
+    cmd = [
+        chrome_bin,
+        f"--remote-debugging-port={port}",
+        f"--user-data-dir={_JOBCORE_PROFILE_DIR}",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--window-size=1280,900",
+        "--lang=en-US",
+    ]
+    if headless:
+        cmd += ["--headless=new", "--disable-gpu"]
+
+    logger.info("Launching real Chrome: %s (port %s)", chrome_bin, port)
+    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    _wait_for_port(port, timeout_s=15)
+
+    driver = _attach_to_chrome(port)
+    driver._chrome_proc = proc   # type: ignore[attr-defined]
+    driver._debug_port = port    # type: ignore[attr-defined]
+    return driver, port, proc
+
+
+def _attach_to_chrome(port: int, *, retries: int = 15) -> webdriver.Chrome:
+    """
+    Connect a new Selenium WebDriver to the Chrome already running on `port`.
+    Called both on first launch and whenever the session goes stale.
+    """
+    options = webdriver.ChromeOptions()
+    options.add_experimental_option("debuggerAddress", f"127.0.0.1:{port}")
+
+    last_exc: Exception = RuntimeError("never tried")
+    for _ in range(retries):
+        try:
+            driver = webdriver.Chrome(options=options)
+            # Switch to the most-recently-opened tab
+            if driver.window_handles:
+                driver.switch_to.window(driver.window_handles[-1])
+            return driver
+        except Exception as exc:
+            last_exc = exc
+            time.sleep(1)
+
+    raise RuntimeError(
+        f"Could not attach Selenium to Chrome on port {port}: {last_exc}"
+    ) from last_exc
+
+
+def _wait_for_port(port: int, *, timeout_s: float = 15) -> None:
+    """Block until the TCP port accepts connections or timeout expires."""
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+                return
+        except OSError:
+            time.sleep(0.3)
+    raise TimeoutError(f"Chrome remote debugging port {port} did not open within {timeout_s}s")
 
 
 def _text(el) -> str:

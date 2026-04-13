@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from jobAgent import run_job_search
 from conversationalAgent import handle_conversation
 from applyUrlAgents import agent_a_extract_apply_url, agent_b_format_apply_url_message
+from selenium.webdriver.support.ui import WebDriverWait
 
 # Allow importing sibling agent packages (jobApplyAgent)
 import os
@@ -16,7 +17,10 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from jobApplyAgent.google_form_apply import is_google_form_url, resolve_final_url
 from jobApplyAgent.interactive_google_form import (
     answer_current_and_advance,
+    is_gmail_logged_in,
+    load_form_after_login,
     next_prompt,
+    start_gmail_login_session,
     start_interactive_session,
 )
 from jobApplyAgent.profile_resolver import normalize_profile, resolve_answer
@@ -184,6 +188,91 @@ def extract_apply_url():
             "error": str(e),
             "message": "An error occurred while extracting the apply link. Please try again."
         }), 500
+
+
+@app.route('/api/apply/gmail-login', methods=['POST'])
+def start_gmail_login():
+    """Open a visible real Chrome browser to Gmail login. Returns applicationId for polling."""
+    try:
+        data = request.json or {}
+        apply_url = (data.get('applyUrl') or '').strip()
+        profile = data.get('profile') or {}
+
+        if not apply_url:
+            return jsonify({'success': False, 'message': 'applyUrl is required'}), 400
+
+        final_url = resolve_final_url(apply_url)
+        session = create_session(apply_url=final_url, profile=profile)
+
+        init = start_gmail_login_session(final_url, headless=False)
+        if not init.get('ok'):
+            delete_session(session.application_id)
+            return jsonify({'success': False,
+                            'message': init.get('message', 'Failed to open Gmail login')})
+
+        session.driver = init['driver']
+        session.wait   = init['wait']
+        # Store port so polling can reconnect if the CDP session drops
+        session.debug_port = init.get('debug_port', 0)
+
+        return jsonify({
+            'success': True,
+            'status': 'awaiting_login',
+            'applicationId': session.application_id,
+            'message': 'A browser window has opened. Please log in with your Gmail account to continue.',
+        })
+    except Exception as e:
+        logger.error(f"Error starting gmail login: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'message': f'Failed to open Gmail login: {str(e)}'}), 500
+
+
+@app.route('/api/apply/gmail-login/status', methods=['GET'])
+def gmail_login_status():
+    """
+    Poll for Gmail login completion.
+    Handles CDP session drops by reconnecting to the real Chrome process.
+    On success, navigates to the form and returns the first question.
+    """
+    application_id = request.args.get('applicationId', '').strip()
+    if not application_id:
+        return jsonify({'success': False, 'message': 'applicationId is required'}), 400
+
+    session = get_session(application_id)
+    if not session or not session.driver:
+        return jsonify({'success': False, 'message': 'Session not found or expired.'}), 404
+
+    try:
+        # is_gmail_logged_in now returns (bool, driver) — driver may be a fresh reconnection
+        logged_in, fresh_driver = is_gmail_logged_in(
+            session.driver, debug_port=session.debug_port
+        )
+
+        # Always save the (possibly reconnected) driver back onto the session
+        if fresh_driver is not session.driver:
+            session.driver = fresh_driver
+            session.wait   = WebDriverWait(fresh_driver, 25)
+
+        if not logged_in:
+            return jsonify({'success': True, 'status': 'awaiting_login',
+                            'applicationId': application_id})
+
+        # Login confirmed — navigate to the form and scan questions
+        result = load_form_after_login(
+            session.driver, session.wait, session.apply_url
+        )
+        if not result.get('ok'):
+            delete_session(application_id)
+            return jsonify({'success': True, 'status': 'error',
+                            'message': f"⚠️ {result.get('message', 'Could not load form after login.')}"})
+
+        session.questions = result['questions']
+        session.index     = result.get('index', 0)
+
+        return jsonify(_auto_answer_or_prompt(session))
+
+    except Exception as e:
+        logger.error(f"Error checking gmail login status: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'message': str(e)}), 500
 
 
 @app.route('/api/apply/start', methods=['POST'])

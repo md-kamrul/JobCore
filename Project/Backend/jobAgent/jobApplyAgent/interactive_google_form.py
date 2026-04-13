@@ -12,11 +12,13 @@ from selenium.webdriver.support.ui import WebDriverWait
 
 from .google_form_apply import (
     MissingInfo,
+    _attach_to_chrome,
     _detect_input_type,
     _fill_block,
     _find_question_title,
     _is_required,
     _make_driver,
+    _make_stealth_driver,
     _peek_dropdown_options,
     is_google_form_url,
     resolve_final_url,
@@ -180,6 +182,141 @@ def _click_button(driver, btn) -> None:
     except WebDriverException:
         # try JS click
         driver.execute_script("arguments[0].click();", btn)
+
+
+def start_gmail_login_session(apply_url: str, *, headless: bool = False, timeout_s: int = 25):
+    """
+    Launch real Chrome at the Gmail sign-in page.
+    Returns ok=True with driver, wait, debug_port, and apply_url.
+    The debug_port lets callers reconnect if the CDP session drops during login.
+    """
+    try:
+        driver, port, _proc = _make_stealth_driver(headless=headless)
+    except Exception as exc:
+        return {"ok": False, "error": "driver_failed", "message": str(exc)}
+
+    wait = WebDriverWait(driver, timeout_s)
+    try:
+        driver.get("https://accounts.google.com/signin/v2/identifier?hl=en")
+    except Exception as exc:
+        try:
+            driver.quit()
+        except Exception:
+            pass
+        return {"ok": False, "error": "open_failed", "message": str(exc)}
+
+    return {
+        "ok": True,
+        "driver": driver,
+        "wait": wait,
+        "debug_port": port,
+        "apply_url": apply_url,
+    }
+
+
+def _safe_current_url(driver) -> str:
+    """Return driver.current_url, re-raising only non-session errors."""
+    try:
+        return driver.current_url or ""
+    except Exception:
+        return ""
+
+
+def _driver_is_alive(driver) -> bool:
+    """Quick check — False if the WebDriver session is stale/dead."""
+    try:
+        _ = driver.current_url
+        return True
+    except Exception:
+        return False
+
+
+def is_gmail_logged_in(driver, *, debug_port: int = 0) -> tuple:
+    """
+    Check whether the user has completed Gmail login.
+
+    Returns (logged_in: bool, driver).
+    If the CDP session dropped, tries to reconnect on debug_port and returns
+    the fresh driver. Callers MUST use the returned driver going forward.
+    """
+    # ── Reconnect if the session went stale ─────────────────────────────────
+    if not _driver_is_alive(driver):
+        if not debug_port:
+            logger.warning("Driver session lost and no debug_port to reconnect.")
+            return False, driver
+        try:
+            logger.info("Session stale — reconnecting to Chrome on port %s", debug_port)
+            driver = _attach_to_chrome(debug_port)
+            logger.info("Reconnected successfully on port %s", debug_port)
+        except Exception as exc:
+            logger.warning("Reconnect failed: %s", exc)
+            return False, driver
+
+    try:
+        url = driver.current_url or ""
+    except Exception:
+        return False, driver
+
+    # ── Google rejected the automated browser → go back to sign-in ──────────
+    if "signin/rejected" in url:
+        try:
+            driver.get("https://accounts.google.com/signin/v2/identifier?hl=en")
+        except Exception:
+            pass
+        return False, driver
+
+    # ── Still on a Google sign-in page ──────────────────────────────────────
+    sign_in_paths = [
+        "accounts.google.com/signin",
+        "accounts.google.com/v3/signin",
+        "accounts.google.com/ServiceLogin",
+        "accounts.google.com/o/oauth2",
+        "accounts.google.com/AccountChooser",
+        "accounts.google.com/v3/signin/challenge",
+        "accounts.google.com/v3/signin/identifier",
+    ]
+    for marker in sign_in_paths:
+        if marker in url:
+            return False, driver
+
+    # ── Still on accounts.google.com — read page text ───────────────────────
+    if "accounts.google.com" in url:
+        try:
+            # Switch to the foremost tab in case a new one opened during OAuth
+            if len(driver.window_handles) > 1:
+                driver.switch_to.window(driver.window_handles[-1])
+            body = driver.find_element(By.TAG_NAME, "body").text.lower()
+            blocking = ["sign in", "couldn't sign you in", "not secure", "try again"]
+            if any(p in body for p in blocking):
+                return False, driver
+        except Exception:
+            pass
+
+    # ── Any other URL means login succeeded ─────────────────────────────────
+    return True, driver
+
+
+def load_form_after_login(driver, wait, apply_url: str, *, timeout_s: int = 25):
+    """Navigate to the Google Form after Gmail login and scan questions."""
+    try:
+        # Switch to the foremost tab (login may have opened extra tabs)
+        if len(driver.window_handles) > 1:
+            driver.switch_to.window(driver.window_handles[-1])
+
+        driver.get(apply_url)
+        WebDriverWait(driver, timeout_s).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "div[role='listitem']"))
+        )
+        questions = _scan_questions(driver, wait)
+        if not questions:
+            return {"ok": False, "error": "no_questions",
+                    "message": "Could not find any fillable questions on the form."}
+        return {"ok": True, "driver": driver, "wait": wait, "questions": questions, "index": 0}
+    except TimeoutException:
+        return {"ok": False, "error": "load_timeout",
+                "message": "Timed out waiting for the form to load after login."}
+    except Exception as exc:
+        return {"ok": False, "error": "load_failed", "message": str(exc)}
 
 
 def start_interactive_session(apply_url: str, *, headless: bool = True, timeout_s: int = 25):
