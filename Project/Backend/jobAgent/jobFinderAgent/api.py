@@ -230,8 +230,9 @@ def start_gmail_login():
 def gmail_login_status():
     """
     Poll for Gmail login completion.
-    Handles CDP session drops by reconnecting to the real Chrome process.
     On success, navigates to the form and returns the first question.
+    The login_completed flag on the session ensures this only fires once
+    even if the frontend polls again before it stops.
     """
     application_id = request.args.get('applicationId', '').strip()
     if not application_id:
@@ -241,13 +242,17 @@ def gmail_login_status():
     if not session or not session.driver:
         return jsonify({'success': False, 'message': 'Session not found or expired.'}), 404
 
+    # ── Guard: already processed — return awaiting_login so the frontend
+    # ignores any in-flight poll that arrives after the first success. ──────
+    if session.login_completed:
+        return jsonify({'success': True, 'status': 'awaiting_login',
+                        'applicationId': application_id})
+
     try:
-        # is_gmail_logged_in now returns (bool, driver) — driver may be a fresh reconnection
         logged_in, fresh_driver = is_gmail_logged_in(
             session.driver, debug_port=session.debug_port
         )
 
-        # Always save the (possibly reconnected) driver back onto the session
         if fresh_driver is not session.driver:
             session.driver = fresh_driver
             session.wait   = WebDriverWait(fresh_driver, 25)
@@ -256,7 +261,11 @@ def gmail_login_status():
             return jsonify({'success': True, 'status': 'awaiting_login',
                             'applicationId': application_id})
 
-        # Login confirmed — navigate to the form and scan questions
+        # ── Login confirmed — mark as done BEFORE building the response ──────
+        # This ensures any concurrent poll that arrives while we are loading
+        # the form will get awaiting_login and be silently ignored.
+        session.login_completed = True
+
         result = load_form_after_login(
             session.driver, session.wait, session.apply_url
         )

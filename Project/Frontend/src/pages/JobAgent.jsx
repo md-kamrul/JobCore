@@ -76,6 +76,9 @@ const JobAgent = () => {
   // Gmail login modal state
   const [gmailModal, setGmailModal] = useState({ show: false, applicationId: null, polling: false });
   const gmailPollRef = useRef(null);
+  // Guard: once we process a successful login response, ignore any
+  // further in-flight poll responses (setInterval race condition).
+  const gmailLoginHandledRef = useRef(false);
   const bottomRef = useRef(null);
 
   useEffect(() => {
@@ -105,6 +108,7 @@ const JobAgent = () => {
   const startGmailLoginPolling = (applicationId) => {
     setGmailModal({ show: true, applicationId, polling: true });
     stopGmailPoll();
+    gmailLoginHandledRef.current = false; // reset guard for this new polling session
     gmailPollRef.current = setInterval(async () => {
       try {
         const resp = await fetch(
@@ -125,7 +129,11 @@ const JobAgent = () => {
 
         if (data.status === "awaiting_login") return; // still waiting
 
-        // Login done & form loaded – close modal and drive the form
+        // Guard: only handle the very first success response
+        if (gmailLoginHandledRef.current) return;
+        gmailLoginHandledRef.current = true;
+
+        // Login done & form loaded — stop polling, close modal, drive the form
         stopGmailPoll();
         setGmailModal({ show: false, applicationId: null, polling: false });
         setMessages((prev) => [

@@ -20,6 +20,9 @@ class ApplicationSession:
     index: int = 0
     # Remote-debug port used by the real Chrome process (for reconnection)
     debug_port: int = 0
+    # Set to True once login is confirmed and form questions are loaded.
+    # Prevents the polling endpoint from re-processing the same login event.
+    login_completed: bool = False
 
 
 _LOCK = Lock()
