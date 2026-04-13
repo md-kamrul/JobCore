@@ -2,6 +2,10 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import asyncio
 import logging
+import os
+import re
+import tempfile
+import urllib.request
 from dotenv import load_dotenv
 from jobAgent import run_job_search
 from conversationalAgent import handle_conversation
@@ -36,6 +40,39 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for frontend communication
+
+
+# ── CV download helper ────────────────────────────────────────────────────────
+
+def _prepare_cv(profile: dict) -> dict:
+    """
+    If profile contains a Supabase signed URL (cv_download_url), download the
+    file to a system temp directory and set profile['resume_path'] to that
+    local path so Selenium can upload it via send_keys().
+
+    Returns the (possibly mutated) profile dict.
+    """
+    download_url = (profile.get("cv_download_url") or "").strip()
+    cv_name      = (profile.get("cv_name") or "").strip()
+
+    if not download_url:
+        return profile   # no CV URL supplied — leave resume_path as-is
+
+    # Derive a safe local filename from cv_name
+    safe_name = re.sub(r"[^\w.\-]", "_", cv_name) if cv_name else "cv_file"
+    ext = os.path.splitext(safe_name)[1] or ".pdf"
+    tmp_path = os.path.join(tempfile.gettempdir(), f"jobcore_{safe_name}")
+
+    try:
+        logger.info("Downloading CV from Supabase to %s", tmp_path)
+        urllib.request.urlretrieve(download_url, tmp_path)
+        profile["resume_path"] = tmp_path
+        logger.info("CV ready at %s", tmp_path)
+    except Exception as exc:
+        logger.warning("CV download failed: %s", exc)
+        # Don't overwrite any existing resume_path if download fails
+
+    return profile
 
 
 def _build_missing_payload(session, *, question, prompt):
@@ -96,9 +133,41 @@ def _auto_answer_or_prompt(session):
             'applyUrl': session.apply_url,
         }
 
-    auto_answer = resolve_answer(current_q.label, profile, session.answers)
-    if (current_q.input_type or '').lower() == 'file' and not auto_answer:
-        auto_answer = profile.get('resume_path')
+def _auto_answer_or_prompt(session):
+    profile = normalize_profile(session.profile)
+
+    current_q, prompt = next_prompt(session.questions, session.index)
+    if not current_q:
+        delete_session(session.application_id)
+        return {
+            'success': True,
+            'status': 'error',
+            'message': '⚠️ No pending question found. Please click Apply again.',
+            'applyUrl': session.apply_url,
+        }
+
+    auto_answer = resolve_answer(current_q.label, profile, session.answers, options=current_q.options)
+
+    # ── File-upload field (CV / Resume) ─────────────────────────────────────
+    if (current_q.input_type or '').lower() == 'file':
+        if not auto_answer:
+            auto_answer = profile.get('resume_path')
+
+        if not auto_answer:
+            # No CV uploaded at all → tell the user to go to their Profile
+            delete_session(session.application_id)
+            return {
+                'success': True,
+                'status': 'needs_cv',
+                'message': (
+                    "📄 This form requires a CV / Resume file upload.\n\n"
+                    "You haven't uploaded a CV yet. Please go to your Profile page → "
+                    "Overview tab → CV / Resume section and upload your CV, "
+                    "then come back and click Apply again."
+                ),
+                'applyUrl': session.apply_url,
+            }
+    # ─────────────────────────────────────────────────────────────────────────
 
     if auto_answer:
         return _build_confirm_payload(
@@ -202,7 +271,8 @@ def start_gmail_login():
             return jsonify({'success': False, 'message': 'applyUrl is required'}), 400
 
         final_url = resolve_final_url(apply_url)
-        session = create_session(apply_url=final_url, profile=profile)
+        profile   = _prepare_cv(profile)          # download CV to local temp file if URL present
+        session   = create_session(apply_url=final_url, profile=profile)
 
         init = start_gmail_login_session(final_url, headless=False)
         if not init.get('ok'):
@@ -434,6 +504,28 @@ def continue_apply():
                 'applyUrl': session.apply_url,
             })
 
+        if status == 'needs_retry':
+            # Fill failed on a required field — do NOT delete session or advance index.
+            # Re-ask the exact same question with a "please try again" prefix.
+            q = step.get('question')
+            prompt = step.get('prompt', '')
+            missing = [{
+                'label': q.label,
+                'required': q.required,
+                'input_type': q.input_type,
+                'options': q.options,
+            }] if q else []
+            retry_message = f"⚠️ Please answer this question again...\n\n{prompt}" if prompt else \
+                            "⚠️ Please answer this question again..."
+            return jsonify({
+                'success': True,
+                'status': 'needs_info',
+                'message': retry_message,
+                'applicationId': session.application_id,
+                'missing': missing,
+                'applyUrl': session.apply_url,
+            })
+
         if status == 'needs_info':
             # Update session state (either advanced on same page or moved to new page)
             session.index = int(step.get('index', session.index))
@@ -441,7 +533,7 @@ def continue_apply():
                 session.questions = step.get('questions')
             return jsonify(_auto_answer_or_prompt(session))
 
-        # error
+        # error — unrecoverable
         delete_session(application_id)
         return jsonify({
             'success': True,

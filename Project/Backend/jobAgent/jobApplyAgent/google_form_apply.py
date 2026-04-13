@@ -1097,7 +1097,7 @@ def apply_google_form(
                 if input_type == "dropdown" and not options:
                     options = _peek_dropdown_options(block, wait, driver)
 
-                value = resolve_answer(label, normalized_profile, extra_answers)
+                value = resolve_answer(label, normalized_profile, extra_answers, options=options)
 
                 # Special case: file upload can use resume_path
                 if input_type == "file" and not value:
@@ -1158,16 +1158,65 @@ def apply_google_form(
 
             if submit_btn:
                 submit_btn.click()
-                # confirmation
-                try:
-                    wait.until(
-                        EC.presence_of_element_located(
-                            (By.XPATH, "//*[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'response has been recorded')]" )
-                        )
-                    )
-                except TimeoutException:
-                    # not all forms show exact text; still consider best-effort submitted
-                    pass
+                # Verify submission instead of assuming success right after click.
+                confirmed = False
+                success_markers = [
+                    "response has been recorded",
+                    "your response has been recorded",
+                    "thanks for submitting",
+                    "submit another response",
+                    "edit your response",
+                    "your response has been submitted",
+                ]
+                failure_markers = [
+                    "this is a required question",
+                    "required question",
+                    "please answer this question",
+                ]
+
+                deadline = time.time() + max(3, int(timeout_s))
+                while time.time() < deadline:
+                    current_url = ""
+                    try:
+                        current_url = (driver.current_url or "").lower()
+                    except Exception:
+                        current_url = ""
+
+                    if "formresponse" in current_url:
+                        confirmed = True
+                        break
+
+                    body_text = ""
+                    try:
+                        body_text = (driver.find_element(By.TAG_NAME, "body").text or "").lower()
+                    except Exception:
+                        body_text = ""
+
+                    if any(m in body_text for m in success_markers):
+                        confirmed = True
+                        break
+
+                    if any(m in body_text for m in failure_markers):
+                        break
+
+                    try:
+                        has_questions = bool(driver.find_elements(By.CSS_SELECTOR, "div[role='listitem']"))
+                    except Exception:
+                        has_questions = False
+
+                    if not has_questions:
+                        if find_button("Submit") is None and find_button("Next") is None:
+                            confirmed = True
+                            break
+
+                    time.sleep(0.35)
+
+                if not confirmed:
+                    return {
+                        "status": "error",
+                        "message": "Could not verify that the form was submitted. Please try again.",
+                        "finalUrl": final_url,
+                    }
 
                 return {
                     "status": "submitted",

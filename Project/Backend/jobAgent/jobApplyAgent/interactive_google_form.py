@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -182,6 +183,52 @@ def _click_button(driver, btn) -> None:
     except WebDriverException:
         # try JS click
         driver.execute_script("arguments[0].click();", btn)
+
+
+def _is_submission_confirmed(driver, timeout_s: int = 25) -> bool:
+    """Best-effort verification that the form was actually submitted."""
+    success_markers = [
+        "response has been recorded",
+        "your response has been recorded",
+        "thanks for submitting",
+        "submit another response",
+        "edit your response",
+        "your response has been submitted",
+    ]
+    failure_markers = [
+        "this is a required question",
+        "required question",
+        "please answer this question",
+    ]
+
+    deadline = time.time() + max(3, int(timeout_s))
+    while time.time() < deadline:
+        url = _safe_current_url(driver).lower()
+        body = _page_text(driver)
+
+        if "formresponse" in url:
+            return True
+
+        if any(m in body for m in success_markers):
+            return True
+
+        if any(m in body for m in failure_markers):
+            return False
+
+        try:
+            has_questions = bool(driver.find_elements(By.CSS_SELECTOR, "div[role='listitem']"))
+        except Exception:
+            has_questions = False
+
+        if not has_questions:
+            submit_btn = _find_nav_button(driver, "submit")
+            next_btn = _find_nav_button(driver, "next")
+            if submit_btn is None and next_btn is None:
+                return True
+
+        time.sleep(0.35)
+
+    return False
 
 
 def start_gmail_login_session(apply_url: str, *, headless: bool = False, timeout_s: int = 25):
@@ -425,17 +472,25 @@ def answer_current_and_advance(
             wait=wait,
             driver=driver,
         )
-    except WebDriverException as exc:
+    except (WebDriverException, Exception) as exc:
         logger.info("Interactive fill failed for '%s' (%s): %s", q.label, q.input_type, exc)
+        # If the field is required, ask the user to answer again instead of
+        # killing the session.  Return needs_retry so the caller re-asks the
+        # same question without advancing the index.
+        if q.required:
+            _, prompt = next_prompt(questions, index)
+            return {
+                "status": "needs_retry",
+                "index": index,
+                "question": q,
+                "prompt": prompt,
+            }
+        # Non-required field — skip it and move on
         return {
-            "status": "error",
-            "message": f"Could not fill the field for '{q.label}'. Please try again or apply manually. ({exc})",
-        }
-    except Exception as exc:
-        logger.info("Interactive fill failed for '%s' (%s): %s", q.label, q.input_type, exc)
-        return {
-            "status": "error",
-            "message": f"Could not fill the field for '{q.label}'. Please try again or apply manually.",
+            "status": "needs_info",
+            "index": index + 1,
+            "question": questions[index + 1] if index + 1 < len(questions) else None,
+            "prompt": next_prompt(questions, index + 1)[1] if index + 1 < len(questions) else "",
         }
 
     # Move to next question on this page
@@ -448,16 +503,13 @@ def answer_current_and_advance(
     submit_btn = _find_nav_button(driver, "submit")
     if submit_btn:
         _click_button(driver, submit_btn)
-        # confirmation
-        try:
-            WebDriverWait(driver, timeout_s).until(
-                EC.presence_of_element_located(
-                    (By.XPATH, "//*[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'response has been recorded')]" )
-                )
-            )
-        except TimeoutException:
-            pass
-        return {"status": "submitted", "message": "✅ Submitted the form."}
+        if _is_submission_confirmed(driver, timeout_s=timeout_s):
+            return {"status": "submitted", "message": "✅ Submitted the form."}
+
+        return {
+            "status": "error",
+            "message": "Could not verify that the form was submitted. Please try again.",
+        }
 
     next_btn = _find_nav_button(driver, "next")
     if not next_btn:

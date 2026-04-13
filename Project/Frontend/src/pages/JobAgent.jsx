@@ -2,7 +2,7 @@ import React, { useState, useContext, useRef, useEffect } from "react";
 import { getResumeCheckerRecommendation } from "../components/ResumeCheckerAgent";
 import ProgressiveJobMessages from "../components/ProgressiveJobMessages";
 import { AuthContext } from "../provider/AuthProvider";
-import { getProfile, getWorkExperience, getEducation } from "../lib/profileService";
+import { getProfile, getWorkExperience, getEducation, getCVSignedUrl } from "../lib/profileService";
 
 // ─── CheckboxPrompt ──────────────────────────────────────────────────────────
 // Renders an inline multi-select UI when the form question is a checkbox type.
@@ -65,6 +65,7 @@ const ConfirmPrompt = ({ suggestedAnswer, onConfirm, onEdit }) => (
 
 const JobAgent = () => {
   const { user } = useContext(AuthContext);
+  const APPLY_FAIL_MESSAGE = "Something wrong... Please try again.";
   const [messages, setMessages] = useState([
     { sender: "ai", text: "Hi there! 👋 How can I help you find a job today?" },
   ]);
@@ -270,6 +271,18 @@ const JobAgent = () => {
 
     const combined = { ...(dbProfile || {}), ...(stored || {}) };
 
+    // ── CV / Resume: fetch a 1-hour signed download URL from Supabase storage ──
+    let cvDownloadUrl = null;
+    const cvName = combined.cv_name || null;
+    if (user?.id && cvName) {
+      try {
+        const { url } = await getCVSignedUrl(user.id, cvName);
+        cvDownloadUrl = url || null;
+      } catch {
+        cvDownloadUrl = null;
+      }
+    }
+
     return {
       ...combined,
       full_name: combined.full_name || combined.name || user?.displayName || "",
@@ -277,13 +290,33 @@ const JobAgent = () => {
       email: combined.email || stored?.email || user?.email || "",
       work_experience: workExperience || combined.work_experience || combined.experience || [],
       education: education || combined.education || [],
+      // cv_name lets the backend know whether a CV was uploaded at all
+      cv_name: cvName || null,
+      // cv_download_url is a temporary signed URL the backend downloads to a local temp file
+      cv_download_url: cvDownloadUrl || null,
     };
   };
 
   // ── Shared helper: process a /api/apply/continue or /api/apply/start response ──
   const handleApplyResponse = (applyData) => {
     if (!applyData?.success) {
-      setMessages((prev) => [...prev, { sender: "ai", text: `❌ ${applyData?.message || "Auto-apply failed."}` }]);
+      setMessages((prev) => [...prev, { sender: "ai", text: `❌ ${APPLY_FAIL_MESSAGE}` }]);
+      setPendingApplication(null);
+      return;
+    }
+
+    // ── CV not uploaded: direct user to their Profile page ──
+    if (applyData?.status === "needs_cv") {
+      setMessages((prev) => [
+        ...prev,
+        {
+          sender: "ai",
+          text:
+            "📄 This application form requires a CV / Resume file upload.\n\n" +
+            "You haven't uploaded a CV yet. Please go to your Profile page → " +
+            "Overview tab → CV / Resume section and upload your CV, then come back and click Apply again.",
+        },
+      ]);
       setPendingApplication(null);
       return;
     }
@@ -327,6 +360,9 @@ const JobAgent = () => {
         awaitingConfirm: false,
         suggestedAnswer: null,
       });
+    } else if (applyData?.status === "error") {
+      setMessages((prev) => [...prev, { sender: "ai", text: `❌ ${APPLY_FAIL_MESSAGE}` }]);
+      setPendingApplication(null);
     } else {
       setMessages((prev) => [...prev, { sender: "ai", text: applyData.message }]);
       setPendingApplication(null);
@@ -356,7 +392,7 @@ const JobAgent = () => {
       const data = await resp.json();
       handleApplyResponse(data);
     } catch {
-      setMessages((prev) => [...prev, { sender: "ai", text: "❌ Unable to continue the auto-apply right now. Please try again." }]);
+      setMessages((prev) => [...prev, { sender: "ai", text: `❌ ${APPLY_FAIL_MESSAGE}` }]);
       setPendingApplication(null);
     } finally {
       setIsTyping(false);
@@ -385,7 +421,7 @@ const JobAgent = () => {
       const data = await resp.json();
       handleApplyResponse(data);
     } catch {
-      setMessages((prev) => [...prev, { sender: "ai", text: "❌ Unable to continue the auto-apply right now. Please try again." }]);
+      setMessages((prev) => [...prev, { sender: "ai", text: `❌ ${APPLY_FAIL_MESSAGE}` }]);
       setPendingApplication(null);
     } finally {
       setIsTyping(false);
@@ -550,7 +586,7 @@ const JobAgent = () => {
         const data = await resp.json();
         handleApplyResponse(data);
       } catch {
-        setMessages((prev) => [...prev, { sender: "ai", text: "❌ Unable to continue the auto-apply right now. Please try again." }]);
+        setMessages((prev) => [...prev, { sender: "ai", text: `❌ ${APPLY_FAIL_MESSAGE}` }]);
         setPendingApplication(null);
       } finally {
         setIsTyping(false);
