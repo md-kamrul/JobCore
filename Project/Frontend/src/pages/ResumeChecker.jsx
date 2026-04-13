@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { FiUpload, FiFileText, FiBriefcase, FiCheckCircle, FiXCircle, FiLoader, FiAlertCircle, FiTarget, FiList } from 'react-icons/fi';
 
 export default function ResumeChecker() {
-  const resumeApiBaseUrl = (import.meta.env.VITE_RESUME_CHECKER_API_URL || 'http://localhost:5003').replace(/\/$/, '');
   const [file, setFile] = useState(null);
   const [position, setPosition] = useState('');
   const [description, setDescription] = useState('');
@@ -87,7 +86,7 @@ export default function ResumeChecker() {
     formData.append('analysis_type', analysisType);
 
     try {
-      const response = await fetch(`${resumeApiBaseUrl}/check_resume`, {
+      const response = await fetch('http://localhost:5004/check_resume', {
         method: 'POST',
         body: formData,
       });
@@ -106,7 +105,7 @@ export default function ResumeChecker() {
         setError(data.error || 'Failed to check resume');
       }
     } catch (err) {
-      setError(`Failed to connect to backend. Make sure the server is running on ${resumeApiBaseUrl}`);
+      setError('Failed to connect to backend. Make sure the server is running on http://localhost:5004');
       console.error(err);
     } finally {
       setLoading(false);

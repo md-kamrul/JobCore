@@ -135,6 +135,7 @@
 .job-message-actions {
 	display: flex;
 	justify-content: flex-end;
+	gap: 0.6em;
 	/* padding: 0.2em; */
 }
 .job-message-apply-btn {
