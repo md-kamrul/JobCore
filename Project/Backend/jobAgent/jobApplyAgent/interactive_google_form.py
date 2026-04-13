@@ -376,7 +376,15 @@ def next_prompt(questions: List[QuestionRef], index: int) -> Tuple[Optional[Ques
         msg += " (required)"
     # If there are explicit options (radio/checkbox/dropdown), show them as a numbered list
     if q.options:
-        opts = q.options
+        # Flatten any option strings that contain embedded newlines — this happens
+        # when a dropdown container's .text bundles all labels into one string.
+        flat_opts: List[str] = []
+        for o in q.options:
+            if "\n" in o:
+                flat_opts.extend([p.strip() for p in o.split("\n") if p.strip()])
+            elif o.strip():
+                flat_opts.append(o.strip())
+        opts = flat_opts if flat_opts else q.options
         opt_lines = []
         for i, o in enumerate(opts, start=1):
             opt_lines.append(f"{i}. {o}")

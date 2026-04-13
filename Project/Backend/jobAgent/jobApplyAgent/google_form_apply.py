@@ -583,6 +583,29 @@ def _read_open_dropdown_options(
     return dedup
 
 
+def _flatten_option_labels(labels: List[str]) -> List[str]:
+    """Split any label that contains embedded newlines into individual items.
+
+    Some Google Forms render the entire dropdown popup as a single element whose
+    .text returns all option texts concatenated with '\\n'.  This turns that
+    single multi-line string back into a proper flat list so each option gets
+    its own number when shown to the user.
+    """
+    flat: List[str] = []
+    seen: set = set()
+    for label in labels:
+        if "\n" in label:
+            parts = [p.strip() for p in label.split("\n") if p.strip()]
+        else:
+            parts = [label.strip()] if label.strip() else []
+        for part in parts:
+            key = part.lower()
+            if key not in seen:
+                seen.add(key)
+                flat.append(part)
+    return flat
+
+
 def _peek_dropdown_options(block, wait: WebDriverWait, driver: webdriver.Chrome) -> List[str]:
     """Open dropdown and return all option labels for chat prompting."""
     try:
@@ -590,14 +613,14 @@ def _peek_dropdown_options(block, wait: WebDriverWait, driver: webdriver.Chrome)
         _ensure_listbox_open(listbox, driver)
 
         visible_rows = _read_open_dropdown_options(driver, wait, include_hidden=False, listbox=listbox)
-        visible_labels = [label for label, _ in visible_rows]
+        visible_labels = _flatten_option_labels([label for label, _ in visible_rows])
         visible_non_placeholder = [label for label in visible_labels if not _is_placeholder_option(label)]
 
         # If visible list is placeholder-only, fetch all DOM options as fallback.
         labels = visible_labels
         if not visible_non_placeholder:
             all_rows = _read_open_dropdown_options(driver, wait, include_hidden=True, listbox=listbox)
-            all_labels = [label for label, _ in all_rows]
+            all_labels = _flatten_option_labels([label for label, _ in all_rows])
             if all_labels:
                 labels = all_labels
 
@@ -607,7 +630,7 @@ def _peek_dropdown_options(block, wait: WebDriverWait, driver: webdriver.Chrome)
         if len(non_placeholder) <= 1:
             nav_labels = _collect_dropdown_options_by_navigation(listbox, driver)
             if nav_labels:
-                labels = nav_labels
+                labels = _flatten_option_labels(nav_labels)
 
         try:
             listbox.send_keys(Keys.ESCAPE)
