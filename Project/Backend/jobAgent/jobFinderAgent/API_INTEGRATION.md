@@ -1,128 +1,165 @@
 # Job Agent API Integration
 
-This connects the Job Finder Agent backend with the React frontend chatbox.
+This guide explains how the frontend Job Agent page integrates with the backend service.
 
-## Architecture
+## Integration Topology
 
-- **Backend**: Flask API server that runs the multi-agent job search system
-- **Frontend**: React chatbox interface in the Frontend folder
-- **Communication**: REST API endpoints for job search
+- Frontend page: ../../Frontend/src/pages/JobAgent.jsx
+- Backend API: ./api.py
+- Base URL: http://localhost:5001
 
-## Setup & Run
+The frontend uses the backend for:
 
-### 1. Install Backend Dependencies
+- conversational chat and job search
+- apply-link extraction from job details
+- interactive Google Form auto-apply flow
+- Gmail sign-in handoff and polling when required by forms
+
+## Run Integration Locally
+
+### 1) Start backend
 
 ```bash
-cd /Users/kamrul/Developer/JobCore/Project/Backend/jobAgent/jobFinderAgent
+cd /Users/kamrul/Developer/CSE499/JobCore/Project/Backend/jobAgent/jobFinderAgent
+python3 -m venv venv
+source venv/bin/activate
 pip install -r requirements.txt
-```
-
-### 2. Start the Backend API Server
-
-```bash
 python api.py
 ```
 
-The API server will start on `http://localhost:5001`
-
-### 3. Start the Frontend
+### 2) Start frontend
 
 ```bash
-cd /Users/kamrul/Developer/JobCore/Project/Frontend
-npm install  # if not already done
+cd /Users/kamrul/Developer/CSE499/JobCore/Project/Frontend
+npm install
 npm run dev
 ```
 
-The frontend will be available at `http://localhost:5173` (or the port Vite assigns)
+### 3) Open app
 
-### 4. Use the Application
+- Frontend: http://localhost:5173
+- Go to /job-agent
 
-1. Open the frontend in your browser
-2. Navigate to the "Job Agent" page
-3. Type your job search query in the chatbox
-4. Wait 30-60 seconds for the AI to process and return results
-5. View job recommendations directly in the chat
+## Endpoint Contract
 
-## API Endpoints
+### GET /api/health
 
-### POST `/api/chat`
-Main chat endpoint that handles conversational job searches.
+Health check used for service verification.
 
-**Request:**
+### POST /api/chat
+
+Main chat endpoint.
+
+Request:
+
 ```json
 {
-  "message": "Find me remote Python developer jobs"
+  "message": "find some mern jobs in bangladesh",
+  "history": []
 }
 ```
 
-**Response:**
+Response fields:
+
+- success: boolean
+- type: conversation | job_results
+- message: response text or job result payload
+- is_search: boolean
+
+### POST /api/search-jobs
+
+Optional direct endpoint for search-only behavior.
+
+### POST /api/extract-apply-url
+
+Request:
+
 ```json
 {
-  "success": true,
-  "type": "job_results",
-  "message": "## 🎯 Recommended Jobs\n\n..."
+  "detailsUrl": "https://example.com/job-details"
 }
 ```
 
-### POST `/api/search-jobs`
-Direct job search endpoint.
+Response includes:
 
-**Request:**
+- applyUrl
+- found
+- isGoogleForm
+- message
+
+### POST /api/apply/start
+
+Starts interactive auto-apply session.
+
+Request:
+
 ```json
 {
-  "query": "senior data scientist in New York"
+  "applyUrl": "https://forms.gle/...",
+  "profile": {
+    "full_name": "Candidate Name",
+    "email": "candidate@example.com",
+    "cv_name": "resume.pdf",
+    "cv_download_url": "https://signed-url"
+  },
+  "headless": true
 }
 ```
 
-**Response:**
+Possible statuses:
+
+- needs_info
+- needs_confirm
+- submitted
+- error
+
+### POST /api/apply/continue
+
+Continues session with user response.
+
+Request:
+
 ```json
 {
-  "success": true,
-  "result": "## 🎯 Recommended Jobs\n\n...",
-  "query": "senior data scientist in New York"
+  "applicationId": "...",
+  "answers": {
+    "What is your name?": "md. kamrul islam"
+  },
+  "headless": true
 }
 ```
 
-### GET `/api/health`
-Health check endpoint.
+### POST /api/apply/gmail-login
 
-**Response:**
-```json
-{
-  "status": "healthy",
-  "message": "Job Agent API is running"
-}
-```
+Starts visible browser login when form requires Google sign-in.
 
-## Features
+### GET /api/apply/gmail-login/status
 
-- ✅ Real-time job search through chat interface
-- ✅ Natural language processing of job queries
-- ✅ 8-10 relevant job recommendations per search
-- ✅ LinkedIn job links and details
-- ✅ Clean markdown-formatted results in chat
-- ✅ Error handling and user feedback
-- ✅ Loading states during search
+Frontend polls this endpoint until login completes.
+
+Query string:
+
+- applicationId
+
+## Frontend Behavior Notes
+
+- Frontend currently uses hardcoded backend base URL http://localhost:5001.
+- Auto-apply logic is message-driven and can ask user for missing form answers.
+- For file upload fields, backend expects local file resolution logic and can use profile CV data.
+
+## Expected Service Dependencies
+
+- NEBIUS_API_KEY
+- SERPAPI_API_KEY
+- local Chrome installation for Google Form automation
 
 ## Troubleshooting
 
-**Backend not starting:**
-- Check that NEBIUS_API_KEY is set in `.env`
-- Install missing dependencies: `pip install -r requirements.txt`
-
-**Frontend can't connect:**
-- Make sure backend is running on port 5001
-- Check CORS is enabled (already configured)
-- Check browser console for errors
-
-**Slow responses:**
-- Normal: AI agents need 30-60 seconds to process
-- Check your internet connection
-- Check terminal logs for errors
-
-## Development
-
-To modify the agent behavior, edit:
-- `jobAgent.py` - Multi-agent system logic
-- `api.py` - API endpoints and request handling
-- `JobAgent.jsx` - Frontend chat interface
+- 400 with query/message required:
+  - Ensure frontend is sending non-empty message.
+- Unknown or expired applicationId:
+  - Restart apply flow from the latest job card.
+- Form not submitted:
+  - Some forms enforce restrictions (sign-in, permissions, file policies).
+- Backend starts but searches fail:
+  - Confirm SERPAPI_API_KEY is configured and valid.
