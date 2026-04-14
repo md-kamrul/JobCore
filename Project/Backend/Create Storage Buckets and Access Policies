@@ -1,0 +1,93 @@
+-- ============================================================
+--  FILE: supabase/02_storage.sql
+--  HOW TO USE:
+--    1. After running 01_schema.sql, stay in SQL Editor
+--    2. Click "New Query" (open a fresh query tab)
+--    3. Paste this entire file and click "Run"
+--
+--  NOTE: You can also create the buckets manually via the
+--  Supabase Dashboard → Storage → "New bucket", but running
+--  this SQL does it automatically and also sets the policies.
+-- ============================================================
+
+
+-- ─── BUCKET 1: avatars ────────────────────────────────────
+-- `public = true` means anyone can VIEW avatar images via URL.
+-- This is fine — profile pictures are not sensitive.
+-- Users can only UPLOAD/DELETE their own avatar (see policies).
+
+insert into storage.buckets (id, name, public)
+values ('avatars', 'avatars', true);
+
+
+-- ─── BUCKET 2: cvs ────────────────────────────────────────
+-- `public = false` means CV files are PRIVATE.
+-- They cannot be accessed by a public URL.
+-- To let the user view/download their own CV, the frontend
+-- generates a short-lived signed URL (see profileService.js).
+
+insert into storage.buckets (id, name, public)
+values ('cvs', 'cvs', false);
+
+
+-- ─── AVATAR STORAGE POLICIES ──────────────────────────────
+-- Rule: anyone can view avatar images (they're public).
+-- Rule: only the owner can upload, update, or delete their avatar.
+--
+-- How folder matching works:
+--   Files are stored at path: {userId}/avatar.jpg
+--   (storage.foldername(name))[1] extracts the first folder
+--   segment, which must match the logged-in user's ID.
+
+create policy "Avatar images are publicly accessible"
+  on storage.objects for select
+  using (bucket_id = 'avatars');
+
+create policy "Users can upload their own avatar"
+  on storage.objects for insert
+  with check (
+    bucket_id = 'avatars'
+    and auth.uid()::text = (storage.foldername(name))[1]
+  );
+
+create policy "Users can update their own avatar"
+  on storage.objects for update
+  using (
+    bucket_id = 'avatars'
+    and auth.uid()::text = (storage.foldername(name))[1]
+  );
+
+create policy "Users can delete their own avatar"
+  on storage.objects for delete
+  using (
+    bucket_id = 'avatars'
+    and auth.uid()::text = (storage.foldername(name))[1]
+  );
+
+
+-- ─── CV STORAGE POLICIES ──────────────────────────────────
+-- CVs are private. Only the owner can upload, read, or delete.
+-- No public SELECT policy — anonymous users get nothing.
+-- The frontend uses createSignedUrl() to give the owner
+-- a temporary download/view link (expires in 1 hour).
+
+create policy "Users can upload their own CV"
+  on storage.objects for insert
+  with check (
+    bucket_id = 'cvs'
+    and auth.uid()::text = (storage.foldername(name))[1]
+  );
+
+create policy "Users can read their own CV"
+  on storage.objects for select
+  using (
+    bucket_id = 'cvs'
+    and auth.uid()::text = (storage.foldername(name))[1]
+  );
+
+create policy "Users can delete their own CV"
+  on storage.objects for delete
+  using (
+    bucket_id = 'cvs'
+    and auth.uid()::text = (storage.foldername(name))[1]
+  );
