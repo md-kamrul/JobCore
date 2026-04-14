@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from difflib import SequenceMatcher
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -154,6 +155,141 @@ def _first_non_empty(*vals: Any) -> Optional[str]:
     return None
 
 
+def _flatten_options(options: Optional[List[str]]) -> List[str]:
+    """Normalize option arrays where one entry may contain newline-separated values."""
+    if not options:
+        return []
+
+    flat: List[str] = []
+    seen = set()
+
+    for opt in options:
+        raw = str(opt or "")
+        parts = [p.strip() for p in re.split(r"[\r\n]+", raw) if p.strip()]
+        if not parts and raw.strip():
+            parts = [raw.strip()]
+        for part in parts:
+            key = re.sub(r"\s+", " ", part).strip().lower()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            flat.append(part)
+
+    return flat
+
+
+def _norm_text(s: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"[^\w]+", " ", (s or "").lower())).strip()
+
+
+def _pick_best_option(options: Optional[List[str]], answer: str) -> Optional[str]:
+    """Map a free-form answer to the best matching option text."""
+    flat_options = _flatten_options(options)
+    if not flat_options:
+        return None
+
+    answer_raw = str(answer or "").strip()
+    if not answer_raw:
+        return None
+
+    answer_norm = _norm_text(answer_raw)
+
+    # Numeric selection support: "1", "option 2", etc.
+    m = re.search(r"\b(\d{1,3})\b", answer_raw)
+    if m:
+        try:
+            idx = int(m.group(1))
+            if 1 <= idx <= len(flat_options):
+                return flat_options[idx - 1]
+        except Exception:
+            pass
+
+    # Exact match after normalization.
+    for opt in flat_options:
+        if _norm_text(opt) == answer_norm:
+            return opt
+
+    # Containment match for short labels.
+    for opt in flat_options:
+        opt_norm = _norm_text(opt)
+        if not opt_norm:
+            continue
+        if answer_norm in opt_norm or opt_norm in answer_norm:
+            return opt
+
+    # Education intent aliases.
+    alias_groups = {
+        "undergraduate": {"undergraduate", "bachelor", "bsc", "b tech", "btech", "honours", "hons"},
+        "postgraduate": {"postgraduate", "masters", "master", "msc", "mba", "mphil"},
+        "phd": {"phd", "doctorate", "doctoral", "d phil"},
+        "student": {"student", "currently", "pursuing", "enrolled", "studying"},
+        "graduate": {"graduate", "graduated", "completed", "alumni"},
+    }
+    answer_tokens = set(answer_norm.split())
+    inferred_aliases = set()
+    for alias, words in alias_groups.items():
+        if any(w in answer_norm for w in words) or words.intersection(answer_tokens):
+            inferred_aliases.add(alias)
+
+    if inferred_aliases:
+        for opt in flat_options:
+            opt_norm = _norm_text(opt)
+            if any(alias in opt_norm for alias in inferred_aliases):
+                return opt
+
+    # Experience range matching (e.g., profile says 2 years, option says 1-3 years).
+    years_match = re.search(r"\b(\d{1,2})\s*(?:\+|years?|yrs?)?\b", answer_norm)
+    if years_match:
+        years = int(years_match.group(1))
+        for opt in flat_options:
+            o = _norm_text(opt)
+            range_match = re.search(r"\b(\d{1,2})\s*(?:-|–|to)\s*(\d{1,2})\b", o)
+            if range_match:
+                lo = int(range_match.group(1))
+                hi = int(range_match.group(2))
+                if lo <= years <= hi:
+                    return opt
+            plus_match = re.search(r"\b(\d{1,2})\s*\+", o)
+            if plus_match and years >= int(plus_match.group(1)):
+                return opt
+
+    # Fuzzy fallback: token overlap + sequence similarity.
+    best = None
+    best_score = 0.0
+    answer_tokens = set(answer_norm.split())
+
+    for opt in flat_options:
+        opt_norm = _norm_text(opt)
+        if not opt_norm:
+            continue
+        opt_tokens = set(opt_norm.split())
+        overlap = len(answer_tokens & opt_tokens)
+        ratio = SequenceMatcher(None, answer_norm, opt_norm).ratio()
+        score = (overlap * 2.0) + ratio
+        if score > best_score:
+            best_score = score
+            best = opt
+
+    return best if best_score >= 1.2 else None
+
+
+def _is_email_record_checkbox(options: Optional[List[str]], question_label: str) -> bool:
+    if not options:
+        return False
+    flat = _flatten_options(options)
+    if not flat:
+        return False
+
+    text = _norm_text(" ".join([question_label or "", *flat]))
+    if "record my email" in text or "record email" in text:
+        return True
+    if "email" in text and any(k in text for k in ("record", "save", "store", "keep")):
+        return True
+    if "ইমেইল" in text and any(k in text for k in ("রেকর্ড", "সংরক্ষণ", "সেভ", "রাখ")):
+        return True
+    return False
+
+
 def normalize_profile(profile: Dict[str, Any] | None) -> Dict[str, str]:
     """Flattens/normalizes profile keys (best-effort)."""
     profile = profile or {}
@@ -290,12 +426,24 @@ def resolve_answer(
     """Best-effort mapping from Google Form question label -> profile/extra answer."""
     extra_answers = extra_answers or {}
 
+    label = (question_label or "").strip().lower()
+    norm_options = _flatten_options(options)
+
+    def _finalize(candidate: Any) -> Optional[str]:
+        text = _first_non_empty(candidate)
+        if not text:
+            return None
+        picked = _pick_best_option(norm_options, text)
+        return picked or text
+
     # If the UI provides an explicit answer keyed by the label, prefer it.
     direct = _first_non_empty(extra_answers.get(question_label))
     if direct:
-        return direct
+        return _finalize(direct)
 
-    label = (question_label or "").strip().lower()
+    # Force an explicit user choice for email-record checkboxes.
+    if _is_email_record_checkbox(norm_options, question_label):
+        return None
 
     def _norm(s: str) -> str:
         return re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).strip()
@@ -316,28 +464,28 @@ def resolve_answer(
         return any(_has_phrase(p) for p in phrases)
 
     if has_any("email", "e-mail", "mail", "email address"):
-        return profile.get("email")
+        return _finalize(profile.get("email"))
 
     if has_any("phone", "mobile", "contact", "contact number", "whatsapp", "cell", "telephone", "tel"):
-        return profile.get("phone")
+        return _finalize(profile.get("phone"))
 
     if has_any("first name", "firstname", "given name"):
-        return profile.get("first_name") or profile.get("name")
+        return _finalize(profile.get("first_name") or profile.get("name"))
 
     if has_any("last name", "lastname", "surname", "family name"):
-        return profile.get("last_name")
+        return _finalize(profile.get("last_name"))
 
     if has_any("full name", "name", "your name", "candidate name"):
-        return profile.get("name")
+        return _finalize(profile.get("name"))
 
     if has_any("linkedin", "linked in"):
-        return profile.get("linkedin")
+        return _finalize(profile.get("linkedin"))
 
     if has_any("github", "git hub", "gitlab", "git lab"):
-        return profile.get("github")
+        return _finalize(profile.get("github"))
 
     if has_any("portfolio", "website", "site", "url", "personal site"):
-        return profile.get("website")
+        return _finalize(profile.get("website"))
 
     if has_any(
         "resume", "cv", "curriculum vitae", "curriculum-vitae",
@@ -345,29 +493,29 @@ def resolve_answer(
         "upload resume", "upload cv", "attach resume", "attach cv",
         "your resume", "your cv", "resume file", "cv file",
     ):
-        return profile.get("resume_path")
+        return _finalize(profile.get("resume_path"))
 
     if has_any("address", "street", "location"):
-        return profile.get("address")
+        return _finalize(profile.get("address"))
 
     if has_any("city"):
-        return profile.get("city")
+        return _finalize(profile.get("city"))
 
     if has_any("country"):
-        return profile.get("country")
+        return _finalize(profile.get("country"))
 
     if has_any("desired role", "role", "position", "job title", "title", "designation"):
-        return profile.get("desired_role")
+        return _finalize(profile.get("desired_role"))
 
     if has_any("experience", "work experience", "employment history", "work history", "professional experience"):
-        return _first_non_empty(profile.get("work_experience"), profile.get("years_experience"))
+        return _finalize(_first_non_empty(profile.get("work_experience"), profile.get("years_experience")))
 
     if has_any("years of experience", "years experience", "yoe", "experience years"):
-        return _first_non_empty(profile.get("years_experience"), profile.get("work_experience"))
+        return _finalize(_first_non_empty(profile.get("years_experience"), profile.get("work_experience")))
 
     if has_any("education", "degree", "university", "college", "school", "gpa", "cgpa", "academic qualification"):
         # For generic education questions return the formatted text summary
-        return profile.get("education")
+        return _finalize(profile.get("education"))
 
     if has_any(
         "education status", "academic status", "current status", "study status",
@@ -379,12 +527,12 @@ def resolve_answer(
         # If the form has options, try to match the level keyword directly
         # so _pick_best_option can find an exact/fuzzy match (e.g. "Undergraduate")
         if options:
-            return _first_non_empty(level, status, profile.get("education"))
+            return _finalize(_first_non_empty(level, status, profile.get("education")))
         # No options (free text field) — return the full descriptive status
-        return _first_non_empty(status, level, profile.get("education"))
+        return _finalize(_first_non_empty(status, level, profile.get("education")))
 
     if has_any("about", "bio", "summary", "profile summary", "about yourself"):
-        return profile.get("bio")
+        return _finalize(profile.get("bio"))
 
     # fallback: if extra answers provides a generic 'default'
-    return _first_non_empty(extra_answers.get("default"))
+    return _finalize(_first_non_empty(extra_answers.get("default")))

@@ -5,11 +5,82 @@ Conversational Agent - Handles general chat and routes to job search agent when 
 from openai import AsyncOpenAI
 import os
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
 # Client will be initialized lazily
 _client = None
+
+
+SEARCH_ACTION_TERMS = {
+    "find", "search", "looking", "look", "need", "want", "show", "get", "seek", "seeking"
+}
+
+JOB_ENTITY_TERMS = {
+    "job", "jobs", "position", "positions", "role", "roles", "opening", "openings",
+    "opportunity", "opportunities", "vacancy", "vacancies", "internship", "internships"
+}
+
+
+def _normalize_bool(value) -> bool:
+    """Normalize bool-like model outputs (true/false, yes/no, 1/0) to a Python bool."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        v = value.strip().lower()
+        if v in {"true", "yes", "1", "job_search", "search"}:
+            return True
+        if v in {"false", "no", "0", "conversation", "chat"}:
+            return False
+    return False
+
+
+def _normalize_confidence(value, default: float = 0.5) -> float:
+    """Parse and clamp confidence to [0.0, 1.0]."""
+    try:
+        conf = float(value)
+    except (TypeError, ValueError):
+        return default
+    return max(0.0, min(1.0, conf))
+
+
+def detect_job_search_intent(user_message: str) -> dict:
+    """
+    Deterministic intent detector for explicit job-search phrasing.
+    Returns a dict compatible with analyze_user_intent output.
+    """
+    text = (user_message or "").strip().lower()
+    if not text:
+        return {
+            "is_job_search": False,
+            "confidence": 0.0,
+            "reasoning": "Empty message"
+        }
+
+    has_action = any(re.search(rf"\b{re.escape(term)}\b", text) for term in SEARCH_ACTION_TERMS)
+    has_job_entity = any(re.search(rf"\b{re.escape(term)}\b", text) for term in JOB_ENTITY_TERMS)
+
+    # Strong patterns like "jobs in bangladesh", "find mern jobs", "looking for internship"
+    strong_patterns = [
+        r"\b(find|search|look(?:ing)?\s*for|show\s*me|get\s*me|need|want|seeking?)\b.*\b(job|jobs|position|positions|role|roles|opening|openings|opportunit(?:y|ies)|vacanc(?:y|ies)|internship|internships)\b",
+        r"\b(job|jobs|position|positions|role|roles|opening|openings|opportunit(?:y|ies)|vacanc(?:y|ies)|internship|internships)\b\s+(in|at|for|near|around|remote|from)\b",
+        r"\b(mern|frontend|front\s*end|backend|full\s*stack|react|node|django|python|java|developer|engineer|designer|data\s+scientist)\b.*\b(job|jobs|internship|internships|position|positions|role|roles)\b",
+    ]
+
+    matches_strong_pattern = any(re.search(pattern, text) for pattern in strong_patterns)
+
+    is_job_search = matches_strong_pattern or (has_action and has_job_entity)
+    confidence = 0.95 if matches_strong_pattern else (0.85 if is_job_search else 0.15)
+    reasoning = "Deterministic keyword/pattern intent detection"
+
+    return {
+        "is_job_search": is_job_search,
+        "confidence": confidence,
+        "reasoning": reasoning
+    }
 
 def get_client():
     """Get or initialize the OpenAI client"""
@@ -69,7 +140,12 @@ Respond ONLY with a JSON object in this exact format:
         # Parse JSON response
         import json
         try:
-            intent_data = json.loads(result)
+            raw_intent_data = json.loads(result)
+            intent_data = {
+                "is_job_search": _normalize_bool(raw_intent_data.get("is_job_search")),
+                "confidence": _normalize_confidence(raw_intent_data.get("confidence"), default=0.5),
+                "reasoning": str(raw_intent_data.get("reasoning", "LLM intent analysis")).strip() or "LLM intent analysis"
+            }
             logger.info(f"Intent analysis: {intent_data}")
             return intent_data
         except json.JSONDecodeError:
@@ -158,8 +234,29 @@ async def handle_conversation(user_message: str, conversation_history: list = No
     }
     """
     
-    # Analyze user intent
+    # Fast deterministic guard for explicit job-search queries.
+    deterministic_intent = detect_job_search_intent(user_message)
+    if deterministic_intent["is_job_search"] and deterministic_intent["confidence"] >= 0.8:
+        logger.info(
+            "Routing to job search agent - Deterministic detector (%s)",
+            deterministic_intent["reasoning"]
+        )
+        return {
+            "type": "job_search",
+            "response": None,
+            "should_search": True,
+            "reasoning": deterministic_intent["reasoning"]
+        }
+
+    # Analyze user intent with LLM for less explicit/ambiguous messages.
     intent = await analyze_user_intent(user_message)
+
+    # Safety override: if LLM misses obvious search phrasing, honor deterministic detector.
+    if (not intent.get("is_job_search")) and deterministic_intent["is_job_search"]:
+        logger.info(
+            "Routing to job search agent - Heuristic override after LLM mismatch"
+        )
+        intent = deterministic_intent
     
     # If confidence is high that it's a job search, return instruction to search
     if intent["is_job_search"] and intent["confidence"] > 0.6:

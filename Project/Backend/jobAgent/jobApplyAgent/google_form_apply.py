@@ -6,9 +6,11 @@ import re
 import shutil
 import socket
 import subprocess
+import sys
 import time
+from difflib import SequenceMatcher
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 import requests
@@ -235,7 +237,7 @@ def _choice_text(el) -> str:
 
 
 def _find_question_title(block) -> str:
-    for sel in ("div[role='heading']", "span.M7eMe", "div.M7eMe", "div.Qr7Oae"):
+    for sel in ("div[role='heading']", "span.M7eMe", "div.M7eMe", "div.Qr7Oae", "div.z12JJ", "span.z12JJ"):
         try:
             t = block.find_element(By.CSS_SELECTOR, sel)
             title = _text(t)
@@ -259,6 +261,305 @@ def _is_required(block) -> bool:
     return title.endswith("*")
 
 
+def _find_add_file_button(block):
+    exact_selector = (
+        ".UywwFc-LgbsSe.UywwFc-LgbsSe-OWXEXe-dgl2Hf"
+        ".UywwFc-StrnGf-YYd4I-VtOx3e.UywwFc-kSE8rc-FoKg4d-sLO9V-YoZ4jf"
+    )
+    try:
+        for el in block.find_elements(By.CSS_SELECTOR, exact_selector):
+            try:
+                if el.is_displayed():
+                    return el
+            except Exception:
+                return el
+    except Exception:
+        pass
+
+    for el in block.find_elements(By.CSS_SELECTOR, "[role='button'], button"):
+        try:
+            text = f"{_text(el)} {(el.get_attribute('aria-label') or '').strip()}".strip().lower()
+        except Exception:
+            text = ""
+        if "add file" in text or "upload file" in text or "browse files" in text:
+            return el
+    return None
+
+
+def _find_upload_popup_control(driver: webdriver.Chrome, *, timeout_s: int = 5):
+    keywords = ("upload",)
+    selector_groups = (
+        "[role='button']",
+        "button",
+        "[role='tab']",
+        "[role='option']",
+        "[role='menuitem']",
+        "a",
+        "div",
+        "span",
+    )
+
+    def _search(root):
+        for selector in selector_groups:
+            try:
+                elements = root.find_elements(By.CSS_SELECTOR, selector)
+            except Exception:
+                continue
+
+            for el in elements:
+                try:
+                    if not el.is_displayed():
+                        continue
+                except Exception:
+                    continue
+
+                try:
+                    text = " ".join(
+                        [
+                            _text(el),
+                            (el.get_attribute("aria-label") or "").strip(),
+                            (el.get_attribute("title") or "").strip(),
+                        ]
+                    ).lower()
+                except Exception:
+                    text = ""
+
+                if text and any(keyword in text for keyword in keywords):
+                    return el
+
+        return None
+
+    deadline = time.time() + max(1, timeout_s)
+    while time.time() < deadline:
+        try:
+            element = _search(driver)
+            if element is not None:
+                return element
+        except Exception:
+            pass
+
+        try:
+            frames = driver.find_elements(By.TAG_NAME, "iframe")
+        except Exception:
+            frames = []
+
+        for frame in frames:
+            try:
+                driver.switch_to.frame(frame)
+            except Exception:
+                continue
+
+            try:
+                element = _search(driver)
+                if element is not None:
+                    return element
+            finally:
+                try:
+                    driver.switch_to.default_content()
+                except Exception:
+                    pass
+
+        time.sleep(0.25)
+
+    return None
+
+
+def _find_browse_button(driver: webdriver.Chrome, *, timeout_s: int = 5):
+    selector = (
+        ".UywwFc-LgbsSe.UywwFc-LgbsSe-OWXEXe-dgl2Hf"
+        ".UywwFc-StrnGf-YYd4I-VtOx3e.UywwFc-kSE8rc-FoKg4d-sLO9V-YoZ4jf"
+    )
+
+    def _search(root):
+        try:
+            elements = root.find_elements(By.CSS_SELECTOR, selector)
+        except Exception:
+            return None
+
+        for el in elements:
+            try:
+                if el.is_displayed():
+                    return el
+            except Exception:
+                return el
+        return None
+
+    deadline = time.time() + max(1, timeout_s)
+    while time.time() < deadline:
+        try:
+            element = _search(driver)
+            if element is not None:
+                return element
+        except Exception:
+            pass
+
+        try:
+            frames = driver.find_elements(By.TAG_NAME, "iframe")
+        except Exception:
+            frames = []
+
+        for frame in frames:
+            try:
+                driver.switch_to.frame(frame)
+            except Exception:
+                continue
+
+            try:
+                element = _search(driver)
+                if element is not None:
+                    return element
+            finally:
+                try:
+                    driver.switch_to.default_content()
+                except Exception:
+                    pass
+
+        time.sleep(0.25)
+
+    return None
+
+
+def _click_my_drive_option(driver: webdriver.Chrome, *, timeout_s: int = 5) -> bool:
+    keywords = ("my drive",)
+    selector_groups = (
+        "[role='button']",
+        "button",
+        "[role='tab']",
+        "[role='option']",
+        "[role='menuitem']",
+        "a",
+        "div",
+        "span",
+    )
+
+    def _find_and_click(root) -> bool:
+        for selector in selector_groups:
+            try:
+                elements = root.find_elements(By.CSS_SELECTOR, selector)
+            except Exception:
+                continue
+
+            for el in elements:
+                try:
+                    if not el.is_displayed():
+                        continue
+                except Exception:
+                    continue
+
+                try:
+                    text = " ".join(
+                        [
+                            _text(el),
+                            (el.get_attribute("aria-label") or "").strip(),
+                            (el.get_attribute("title") or "").strip(),
+                        ]
+                    ).lower()
+                except Exception:
+                    text = ""
+
+                if not text or not any(keyword in text for keyword in keywords):
+                    continue
+
+                try:
+                    _safe_click(driver, el)
+                    return True
+                except Exception:
+                    continue
+
+        return False
+
+    deadline = time.time() + max(1, timeout_s)
+    while time.time() < deadline:
+        try:
+            if _find_and_click(driver):
+                return True
+        except Exception:
+            pass
+
+        try:
+            frames = driver.find_elements(By.TAG_NAME, "iframe")
+        except Exception:
+            frames = []
+
+        for frame in frames:
+            try:
+                driver.switch_to.frame(frame)
+            except Exception:
+                continue
+
+            try:
+                if _find_and_click(driver):
+                    return True
+            finally:
+                try:
+                    driver.switch_to.default_content()
+                except Exception:
+                    pass
+
+        time.sleep(0.25)
+
+    return False
+
+
+def _upload_file_via_native_dialog(file_path: str) -> bool:
+    if not sys.platform.startswith("darwin"):
+        return False
+
+    file_path = os.path.abspath(os.path.expanduser(file_path or ""))
+    if not os.path.isfile(file_path):
+        return False
+
+    folder_path = os.path.dirname(file_path)
+    file_name = os.path.basename(file_path)
+    safe_folder = folder_path.replace("\\", "\\\\").replace('"', '\\"')
+    safe_name = file_name.replace("\\", "\\\\").replace('"', '\\"')
+    script = f'''tell application "System Events"
+    tell application "Google Chrome" to activate
+    tell process "Google Chrome"
+        set frontmost to true
+    end tell
+    delay 0.5
+    keystroke "g" using {{command down, shift down}}
+    delay 0.5
+    keystroke "{safe_folder}"
+    key code 36
+    delay 0.7
+    keystroke "{safe_name}"
+    delay 0.2
+    key code 36
+end tell'''
+
+    try:
+        subprocess.run(["osascript", "-e", script], check=True, capture_output=True, text=True)
+        return True
+    except Exception:
+        return False
+
+
+def _record_progress(progress_callback: Optional[Callable[[str], None]], message: str) -> None:
+    if progress_callback is None:
+        return
+    try:
+        progress_callback(message)
+    except Exception:
+        pass
+
+
+def _looks_like_file_upload(block) -> bool:
+    if block.find_elements(By.CSS_SELECTOR, "input[type='file']"):
+        return True
+
+    if _find_add_file_button(block) is not None:
+        return True
+
+    try:
+        body = re.sub(r"\s+", " ", _text(block).lower())
+    except Exception:
+        body = ""
+
+    return any(marker in body for marker in ("add file", "upload file", "file upload"))
+
+
 def _detect_input_type(block) -> Tuple[str, List[str]]:
     # Google Forms often uses a contenteditable textbox instead of <input>/<textarea>
     # Example: <div role="textbox" aria-multiline="true|false" contenteditable="true">...
@@ -274,6 +575,9 @@ def _detect_input_type(block) -> Tuple[str, List[str]]:
     if block.find_elements(By.CSS_SELECTOR, "input[type='file']"):
         return "file", []
 
+    if _looks_like_file_upload(block):
+        return "file", []
+
     if block.find_elements(By.CSS_SELECTOR, "textarea"):
         return "textarea", []
 
@@ -284,7 +588,7 @@ def _detect_input_type(block) -> Tuple[str, List[str]]:
     if block.find_elements(By.CSS_SELECTOR, "input[type='text']"):
         return "text", []
 
-    radios = block.find_elements(By.CSS_SELECTOR, "div[role='radio']")
+    radios = block.find_elements(By.CSS_SELECTOR, "[role='radio']")
     if radios:
         options = [_choice_text(r) for r in radios]
         options = [o.strip() for o in options if (o or "").strip()]
@@ -293,7 +597,7 @@ def _detect_input_type(block) -> Tuple[str, List[str]]:
         options = [o for o in options if not (o in seen or seen.add(o))]
         return "radio", options
 
-    checkboxes = block.find_elements(By.CSS_SELECTOR, "div[role='checkbox']")
+    checkboxes = block.find_elements(By.CSS_SELECTOR, "[role='checkbox']")
     if checkboxes:
         options = [_choice_text(c) for c in checkboxes]
         options = [o.strip() for o in options if (o or "").strip()]
@@ -311,45 +615,126 @@ def _pick_best_option(options: List[str], answer: str) -> Optional[str]:
     if not options or not answer:
         return None
 
-    a = answer.strip().lower()
+    # Flatten newline-bundled labels so one raw option containing
+    # "A\nB\nC" becomes three selectable options.
+    flat_options = _flatten_option_labels([str(o or "") for o in options])
+    if not flat_options:
+        return None
+
+    def _norm(text: str) -> str:
+        return re.sub(r"\s+", " ", re.sub(r"[^\w]+", " ", (text or "").lower())).strip()
+
+    a_raw = answer.strip()
+    a = _norm(a_raw)
 
     # numeric selection: '1' or '1.' or 'option 1' -> map to option index
-    m = re.search(r"\b(\d{1,3})\b", a)
+    m = re.search(r"\b(\d{1,3})\b", a_raw)
     if m:
         try:
             idx = int(m.group(1))
-            if 1 <= idx <= len(options):
-                return options[idx - 1]
+            if 1 <= idx <= len(flat_options):
+                return flat_options[idx - 1]
         except Exception:
             pass
 
     # single-letter selection: 'a' -> 1, 'b' -> 2
     if len(a) == 1 and a.isalpha():
         idx = ord(a.lower()) - ord("a") + 1
-        if 1 <= idx <= len(options):
-            return options[idx - 1]
+        if 1 <= idx <= len(flat_options):
+            return flat_options[idx - 1]
 
     # exact / case-insensitive
-    for o in options:
-        if o.strip().lower() == a:
+    for o in flat_options:
+        if _norm(o) == a:
             return o
 
     # contains
-    for o in options:
-        if a in o.strip().lower() or o.strip().lower() in a:
+    for o in flat_options:
+        on = _norm(o)
+        if a in on or on in a:
             return o
 
+    # Education-level aliases commonly used in profile fields.
+    aliases = {
+        "undergraduate": {"undergraduate", "bachelor", "bsc", "b tech", "btech", "honours", "hons"},
+        "postgraduate": {"postgraduate", "masters", "master", "msc", "mba", "mphil"},
+        "phd": {"phd", "doctorate", "doctoral", "d phil"},
+        "student": {"student", "currently", "pursuing", "enrolled", "studying"},
+        "graduate": {"graduate", "graduated", "completed", "alumni"},
+    }
+    a_tokens = set(a.split())
+    inferred = set()
+    for alias, words in aliases.items():
+        if any(w in a for w in words) or words.intersection(a_tokens):
+            inferred.add(alias)
+
+    if inferred:
+        for o in flat_options:
+            on = _norm(o)
+            if any(alias in on for alias in inferred):
+                return o
+
+    # Experience range matching, e.g. answer "2 years" vs option "1-3 years".
+    years_match = re.search(r"\b(\d{1,2})\s*(?:\+|years?|yrs?)?\b", a)
+    if years_match:
+        years = int(years_match.group(1))
+        for o in flat_options:
+            on = _norm(o)
+            range_match = re.search(r"\b(\d{1,2})\s*(?:-|–|to)\s*(\d{1,2})\b", on)
+            if range_match:
+                lo = int(range_match.group(1))
+                hi = int(range_match.group(2))
+                if lo <= years <= hi:
+                    return o
+            plus_match = re.search(r"\b(\d{1,2})\s*\+", on)
+            if plus_match and years >= int(plus_match.group(1)):
+                return o
+
     # light fuzzy: choose option with max token overlap
-    a_tokens = set(re.findall(r"[a-z0-9]+", a))
+    a_tokens = set(a.split())
     best = None
-    best_score = 0
-    for o in options:
-        o_tokens = set(re.findall(r"[a-z0-9]+", o.lower()))
-        score = len(a_tokens & o_tokens)
+    best_score = 0.0
+    for o in flat_options:
+        on = _norm(o)
+        if not on:
+            continue
+        o_tokens = set(on.split())
+        overlap = len(a_tokens & o_tokens)
+        ratio = SequenceMatcher(None, a, on).ratio()
+        score = (overlap * 2.0) + ratio
         if score > best_score:
             best_score = score
             best = o
-    return best if best_score > 0 else None
+    return best if best_score >= 1.2 else None
+
+
+def _is_checkbox_checked(el) -> bool:
+    try:
+        aria = (el.get_attribute("aria-checked") or "").strip().lower()
+        if aria in {"true", "false"}:
+            return aria == "true"
+    except Exception:
+        pass
+    try:
+        return bool(el.get_attribute("checked"))
+    except Exception:
+        return False
+
+
+def _set_checkbox_state(driver: webdriver.Chrome, el, should_check: bool) -> bool:
+    """Set checkbox element state to checked/unchecked with best-effort verification."""
+    current = _is_checkbox_checked(el)
+    if current == should_check:
+        return True
+
+    _safe_click(driver, el)
+    updated = _is_checkbox_checked(el)
+    if updated == should_check:
+        return True
+
+    # Retry once for flaky click overlays.
+    _safe_click(driver, el)
+    return _is_checkbox_checked(el) == should_check
 
 
 def _is_placeholder_option(text: str) -> bool:
@@ -378,6 +763,103 @@ def _is_placeholder_option(text: str) -> bool:
         return True
 
     return False
+
+
+def _is_email_record_checkbox(label: str, options: Optional[List[str]] = None) -> bool:
+    """Detect Google Form 'Record my email' style checkbox questions."""
+    parts = [str(label or "")]
+    for o in options or []:
+        parts.append(str(o or ""))
+    text = re.sub(r"\s+", " ", " ".join(parts).strip().lower())
+    if not text:
+        return False
+
+    # English variants
+    if "record my email" in text or "record email" in text:
+        return True
+    if "email" in text and any(k in text for k in ("record", "save", "store", "keep")):
+        return True
+
+    # Bengali variants
+    if "ইমেইল" in text and any(k in text for k in ("রেকর্ড", "সংরক্ষণ", "সেভ", "রাখ")):
+        return True
+
+    return False
+
+
+def _find_best_email_record_checkbox(block):
+    checkboxes = block.find_elements(By.CSS_SELECTOR, "[role='checkbox']")
+    if not checkboxes:
+        return None
+
+    for c in checkboxes:
+        label_text = (_choice_text(c) or _text(c) or "").strip().lower()
+        if "record" in label_text and "email" in label_text:
+            return c
+        if "ইমেইল" in label_text and any(k in label_text for k in ("রেকর্ড", "সংরক্ষণ", "সেভ", "রাখ")):
+            return c
+
+    return checkboxes[0]
+
+
+def _looks_like_email_permission_text(text: str) -> bool:
+    t = re.sub(r"\s+", " ", (text or "").strip().lower())
+    if not t:
+        return False
+
+    # English phrasing used by Google Forms email-record consent.
+    if "record my email" in t or "record email" in t:
+        return True
+    if "email to be included with my response" in t:
+        return True
+    if "email" in t and "response" in t and any(k in t for k in ("record", "include", "included", "save", "store")):
+        return True
+
+    # Bengali phrasing fallback.
+    if "ইমেইল" in t and any(k in t for k in ("রেকর্ড", "সংরক্ষণ", "সেভ", "রাখ")):
+        return True
+
+    return False
+
+
+def _auto_check_email_record_permissions(driver: webdriver.Chrome) -> int:
+    """Pre-task: find and check visible Google Form email-record consent checkboxes."""
+    checked_count = 0
+    try:
+        checkboxes = driver.find_elements(By.CSS_SELECTOR, "[role='checkbox']")
+    except Exception:
+        return 0
+
+    for box in checkboxes:
+        try:
+            if not box.is_displayed():
+                continue
+        except Exception:
+            continue
+
+        # Build rich context text from checkbox + nearest listitem block.
+        context = []
+        try:
+            context.append(_choice_text(box))
+        except Exception:
+            pass
+        try:
+            parent_block = box.find_element(By.XPATH, "./ancestor::*[@role='listitem'][1]")
+            context.append(_text(parent_block))
+        except Exception:
+            try:
+                context.append(_text(box))
+            except Exception:
+                pass
+
+        merged_text = " ".join([c for c in context if c])
+        if not _looks_like_email_permission_text(merged_text):
+            continue
+
+        if _set_checkbox_state(driver, box, True):
+            checked_count += 1
+
+    return checked_count
 
 
 def _ensure_listbox_open(listbox, driver: webdriver.Chrome) -> None:
@@ -523,6 +1005,16 @@ def _read_open_dropdown_options(
         if scoped:
             return scoped
 
+        # Some forms render option labels via class-based nodes before role=option
+        # elements become discoverable.
+        if listbox is not None:
+            try:
+                class_rows = _class_based_dropdown_rows(listbox, drv, include_hidden=False)
+                if class_rows:
+                    return [row[1] for row in class_rows]
+            except Exception:
+                pass
+
         # Fallback: any visible option on page.
         opts = drv.find_elements(By.CSS_SELECTOR, "div[role='option'], li[role='option']")
         visible = []
@@ -658,6 +1150,100 @@ def _active_dropdown_option_text(listbox, driver: webdriver.Chrome) -> str:
         return data_value
     except Exception:
         return ""
+
+
+def _norm_option_text(text: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"[^\w]+", " ", (text or "").lower())).strip()
+
+
+def _is_option_match(candidate: str, target: str) -> bool:
+    c = _norm_option_text(candidate)
+    t = _norm_option_text(target)
+    if not c or not t:
+        return False
+    return c == t or t in c or c in t
+
+
+def _dropdown_value_looks_selected(listbox, target_text: str) -> bool:
+    target = _norm_option_text(target_text)
+    if not target:
+        return False
+    try:
+        observed = " ".join([
+            _text(listbox) or "",
+            (listbox.get_attribute("aria-label") or "").strip(),
+            (listbox.get_attribute("data-value") or "").strip(),
+            (listbox.get_attribute("aria-activedescendant") or "").strip(),
+        ])
+    except Exception:
+        observed = _text(listbox) or ""
+    return target in _norm_option_text(observed)
+
+
+def _select_dropdown_by_navigation(
+    listbox,
+    driver: webdriver.Chrome,
+    target_text: str,
+    *,
+    max_steps: int = 160,
+) -> bool:
+    """Fallback: iterate options with keyboard and select target via Enter."""
+    target = _norm_option_text(target_text)
+    if not target:
+        return False
+
+    try:
+        _safe_click(driver, listbox)
+        _ensure_listbox_open(listbox, driver)
+        try:
+            listbox.send_keys(Keys.HOME)
+        except Exception:
+            pass
+
+        stale_hits = 0
+        for _ in range(max_steps):
+            current = _active_dropdown_option_text(listbox, driver)
+            if current and _is_option_match(current, target_text):
+                try:
+                    listbox.send_keys(Keys.ENTER)
+                    return True
+                except Exception:
+                    return False
+
+            before = _norm_option_text(current)
+            try:
+                listbox.send_keys(Keys.ARROW_DOWN)
+            except Exception:
+                continue
+            after = _norm_option_text(_active_dropdown_option_text(listbox, driver))
+            if after and after == before:
+                stale_hits += 1
+            else:
+                stale_hits = 0
+            if stale_hits >= 10:
+                break
+    except Exception:
+        return False
+
+    return False
+
+
+def _select_dropdown_by_typing(listbox, driver: webdriver.Chrome, target_text: str) -> bool:
+    """Fallback: type option text into listbox then press Enter."""
+    if not str(target_text or "").strip():
+        return False
+    try:
+        _safe_click(driver, listbox)
+        _ensure_listbox_open(listbox, driver)
+        try:
+            listbox.send_keys(Keys.HOME)
+        except Exception:
+            pass
+        listbox.send_keys(str(target_text))
+        listbox.send_keys(Keys.ENTER)
+        return _dropdown_value_looks_selected(listbox, str(target_text))
+    except Exception:
+        return False
 
 
 def _collect_dropdown_options_by_navigation(listbox, driver: webdriver.Chrome, *, max_steps: int = 120) -> List[str]:
@@ -827,6 +1413,35 @@ def _first_present(block, css: str):
     return els[0]
 
 
+def _find_file_input(driver: webdriver.Chrome, block=None):
+    scopes = []
+    if block is not None:
+        scopes.append(block)
+    scopes.append(driver)
+
+    for scope in scopes:
+        try:
+            inputs = scope.find_elements(By.CSS_SELECTOR, "input[type='file']")
+        except Exception:
+            continue
+
+        for file_input in inputs:
+            try:
+                if file_input.is_enabled():
+                    return file_input
+            except Exception:
+                return file_input
+
+    return None
+
+
+def _file_input_has_files(driver: webdriver.Chrome, file_input) -> bool:
+    try:
+        return bool(driver.execute_script("return !!(arguments[0] && arguments[0].files && arguments[0].files.length);", file_input))
+    except Exception:
+        return False
+
+
 def _clear_and_type(driver: webdriver.Chrome, el, value: str) -> None:
     _safe_click(driver, el)
 
@@ -874,6 +1489,7 @@ def _fill_block(
     value: str,
     wait: WebDriverWait,
     driver: webdriver.Chrome,
+    progress_callback: Optional[Callable[[str], None]] = None,
 ) -> None:
     if input_type in {"text", "email"}:
         # Prefer real inputs, but support Google Forms' contenteditable textbox too.
@@ -894,17 +1510,102 @@ def _fill_block(
         return
 
     if input_type == "file":
-        file_input = _first_present(block, "input[type='file']")
-        _scroll_into_view(driver, file_input)
-        try:
-            file_input.send_keys(value)
-        except WebDriverException:
-            # Some forms wrap/overlay the real input. JS-click can help focus before send_keys.
+        raw_value = (value or "").strip()
+        if raw_value in {"", "1", "y", "yes", "resume", "cv"}:
+            file_path = os.path.expanduser("~/Downloads/cv.pdf")
+        else:
+            expanded_value = os.path.expanduser(raw_value)
+            if not os.path.isabs(expanded_value) and os.path.sep not in expanded_value:
+                download_candidate = os.path.expanduser(f"~/Downloads/{expanded_value}")
+                if os.path.isfile(download_candidate):
+                    expanded_value = download_candidate
+            file_path = os.path.abspath(expanded_value)
+
+        if not os.path.isfile(file_path):
+            raise FileNotFoundError(f"File upload path does not exist: {file_path}")
+
+        file_input = _find_file_input(driver, block)
+        add_file_button = _find_add_file_button(block)
+
+        def _file_upload_completed() -> bool:
+            file_name = os.path.basename(file_path).lower()
+            sources = []
             try:
-                _safe_click(driver, file_input)
+                sources.append(_text(block).lower())
             except Exception:
                 pass
-            file_input.send_keys(value)
+            try:
+                sources.append((driver.find_element(By.TAG_NAME, "body").text or "").lower())
+            except Exception:
+                pass
+            if file_input is not None and _file_input_has_files(driver, file_input):
+                return True
+            return any(file_name in src for src in sources)
+
+        if add_file_button is not None:
+            _safe_click(driver, add_file_button)
+            time.sleep(0.8)
+
+            # Open the insert-file chooser in the order requested by the user.
+            _click_my_drive_option(driver, timeout_s=2)
+
+            upload_control = _find_upload_popup_control(driver, timeout_s=3)
+            if upload_control is not None:
+                _safe_click(driver, upload_control)
+                time.sleep(0.8)
+
+            browse_button = _find_browse_button(driver, timeout_s=3)
+            if browse_button is not None:
+                _safe_click(driver, browse_button)
+                _record_progress(progress_callback, "button clicked")
+                time.sleep(0.8)
+
+                _record_progress(progress_callback, "searching files")
+
+                if sys.platform.startswith("darwin"):
+                    if _upload_file_via_native_dialog(file_path):
+                        _record_progress(progress_callback, "file clicked")
+                        deadline = time.time() + 5
+                        while time.time() < deadline:
+                            if _file_upload_completed():
+                                return
+                            time.sleep(0.2)
+
+        if file_input is None:
+            if add_file_button is not None:
+                _safe_click(driver, add_file_button)
+                time.sleep(0.5)
+                file_input = _find_file_input(driver, block)
+
+        if file_input is None:
+            raise NoSuchElementException("No file upload input found for Google Form question.")
+
+        _scroll_into_view(driver, file_input)
+
+        try:
+            file_input.send_keys(file_path)
+        except WebDriverException:
+            # Some Google Forms uploads keep the real input hidden until the popup opens.
+            # Reveal the input and try again before falling back to any native picker flow.
+            try:
+                driver.execute_script(
+                    "arguments[0].removeAttribute('hidden'); arguments[0].style.display='block'; arguments[0].style.visibility='visible'; arguments[0].style.opacity='1';",
+                    file_input,
+                )
+            except Exception:
+                pass
+            file_input.send_keys(file_path)
+
+        _record_progress(progress_callback, "file clicked")
+
+        deadline = time.time() + 3
+        while time.time() < deadline:
+            if _file_input_has_files(driver, file_input):
+                return
+            time.sleep(0.15)
+
+        if not _file_input_has_files(driver, file_input):
+            raise WebDriverException(f"File upload did not register for: {file_path}")
         return
 
     if input_type == "radio":
@@ -944,10 +1645,27 @@ def _fill_block(
 
     if input_type == "checkbox":
         # support comma-separated list
+        is_email_record = _is_email_record_checkbox(label, options)
+        raw_value = str(value or "").strip().lower()
+
+        # Special handling requested by product: ask user yes/no for email record checkbox.
+        if is_email_record:
+            if raw_value in {"yes", "y", "true", "1", "check", "checked"}:
+                target = _find_best_email_record_checkbox(block)
+                if target is not None:
+                    _set_checkbox_state(driver, target, True)
+                return
+            if raw_value in {"no", "n", "false", "0", "skip", "leave unchecked", "__skip_checkbox__"}:
+                target = _find_best_email_record_checkbox(block)
+                if target is not None:
+                    _set_checkbox_state(driver, target, False)
+                return
+
         desired = [v.strip() for v in re.split(r"[,;/]", value) if v.strip()]
-        checkboxes = block.find_elements(By.CSS_SELECTOR, "div[role='checkbox']")
+        checkboxes = block.find_elements(By.CSS_SELECTOR, "[role='checkbox']")
         if not desired:
-            if checkboxes:
+            # Do not default-click email record checkbox when answer is empty.
+            if checkboxes and not is_email_record:
                 _safe_click(driver, checkboxes[0])
             return
         # Precompute checkbox labels for matching
@@ -993,20 +1711,35 @@ def _fill_block(
         return
 
     if input_type == "dropdown":
-        listbox = _first_visible(block, "div[role='listbox']")
+        try:
+            listbox = _first_visible(block, "div[role='listbox'], [role='combobox']")
+        except NoSuchElementException:
+            listbox = _first_visible(block, "div[role='listbox']")
+
         _ensure_listbox_open(listbox, driver)
 
-        visible_rows = _read_open_dropdown_options(driver, wait, include_hidden=False, listbox=listbox)
-        all_rows = _read_open_dropdown_options(driver, wait, include_hidden=True, listbox=listbox)
+        try:
+            visible_rows = _read_open_dropdown_options(driver, wait, include_hidden=False, listbox=listbox)
+        except Exception:
+            visible_rows = []
+        try:
+            all_rows = _read_open_dropdown_options(driver, wait, include_hidden=True, listbox=listbox)
+        except Exception:
+            all_rows = []
         rows = all_rows or visible_rows
         actionable_rows = [(label, el) for label, el in rows if not _is_placeholder_option(label)] or rows
-        labels = [label for label, _ in actionable_rows]
-        best_text = _pick_best_option([t for t in labels if t], value)
+
+        # Match against the full known option universe, not only visible rows.
+        dom_labels = [label for label, _ in actionable_rows if label]
+        known_labels = _flatten_option_labels([str(o or "") for o in (options or [])])
+        merged_labels = _flatten_option_labels(known_labels + dom_labels)
+        best_text = _pick_best_option(merged_labels, value)
 
         for label_text, opt_el in actionable_rows:
-            if best_text and label_text.strip().lower() == best_text.strip().lower():
+            if best_text and _is_option_match(label_text, best_text):
                 _safe_click(driver, opt_el)
-                return
+                if _dropdown_value_looks_selected(listbox, best_text):
+                    return
 
         m = re.search(r"\b(\d{1,3})\b", str(value or ""))
         if m:
@@ -1014,9 +1747,49 @@ def _fill_block(
                 idx = int(m.group(1))
                 if 1 <= idx <= len(actionable_rows):
                     _safe_click(driver, actionable_rows[idx - 1][1])
-                    return
+                    clicked_text = actionable_rows[idx - 1][0]
+                    if _dropdown_value_looks_selected(listbox, clicked_text):
+                        return
             except Exception:
                 pass
+
+        # If user supplied/confirmed text but target isn't in current DOM subset,
+        # use keyboard navigation fallback to reach virtualized/lazy-rendered options.
+        if str(value or "").strip() and best_text:
+            if _select_dropdown_by_navigation(listbox, driver, best_text):
+                return
+            if _select_dropdown_by_typing(listbox, driver, best_text):
+                return
+
+            # Try one more time by directly clicking visible global option nodes by text.
+            try:
+                direct_candidates = driver.find_elements(By.CSS_SELECTOR, "[role='option']")
+            except Exception:
+                direct_candidates = []
+            for candidate in direct_candidates:
+                try:
+                    if not candidate.is_displayed():
+                        continue
+                except Exception:
+                    continue
+                c_text = (_choice_text(candidate) or _text(candidate) or "").strip()
+                if c_text and _is_option_match(c_text, best_text):
+                    _safe_click(driver, candidate)
+                    if _dropdown_value_looks_selected(listbox, best_text):
+                        return
+
+        # Final fallback: even if we could not derive a best option label from scraped
+        # options, still try selecting directly from the user's provided/confirmed text.
+        raw_value = str(value or "").strip()
+        if raw_value:
+            if _select_dropdown_by_navigation(listbox, driver, raw_value):
+                return
+            if _select_dropdown_by_typing(listbox, driver, raw_value):
+                return
+
+            # If user provided a value but we still couldn't select anything, fail fast.
+            # Caller will re-ask required questions instead of silently moving forward.
+            raise WebDriverException(f"Dropdown selection failed for value: {raw_value}")
 
         # Default only when value is empty.
         if not str(value or "").strip() and actionable_rows:
@@ -1082,6 +1855,10 @@ def apply_google_form(
 
         for _ in range(max_pages):
             wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div[role='listitem']")))
+
+            # Pre-task before Q&A filling: auto-check email-record consent checkbox if present.
+            _auto_check_email_record_permissions(driver)
+
             blocks = driver.find_elements(By.CSS_SELECTOR, "div[role='listitem']")
 
             missing: List[MissingInfo] = []
@@ -1097,7 +1874,11 @@ def apply_google_form(
                 if input_type == "dropdown" and not options:
                     options = _peek_dropdown_options(block, wait, driver)
 
-                value = resolve_answer(label, normalized_profile, extra_answers, options=options)
+                # Auto-handle consent checkbox used by Google Forms to record email.
+                if input_type == "checkbox" and _is_email_record_checkbox(label, options):
+                    value = "yes"
+                else:
+                    value = resolve_answer(label, normalized_profile, extra_answers, options=options)
 
                 # Special case: file upload can use resume_path
                 if input_type == "file" and not value:
