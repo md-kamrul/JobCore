@@ -24,6 +24,7 @@ from jobApplyAgent.interactive_google_form import (
     is_gmail_logged_in,
     load_form_after_login,
     next_prompt,
+    resume_upload_agent,
     start_gmail_login_session,
     start_interactive_session,
 )
@@ -40,6 +41,8 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for frontend communication
+
+DEFAULT_RESUME_UPLOAD_PATH = "/Users/kamrul/Downloads/cv.pdf"
 
 
 # ── CV download helper ────────────────────────────────────────────────────────
@@ -120,18 +123,12 @@ def _build_confirm_payload(session, *, question, prompt, suggested_answer: str):
     }
 
 
-def _auto_answer_or_prompt(session):
-    profile = normalize_profile(session.profile)
+def _resolve_resume_upload_answer(raw_answer: object) -> str:
+    answer = str(raw_answer or "").strip()
+    if answer == "1" or not answer:
+        return DEFAULT_RESUME_UPLOAD_PATH
+    return answer
 
-    current_q, prompt = next_prompt(session.questions, session.index)
-    if not current_q:
-        delete_session(session.application_id)
-        return {
-            'success': True,
-            'status': 'error',
-            'message': '⚠️ No pending question found. Please click Apply again.',
-            'applyUrl': session.apply_url,
-        }
 
 def _auto_answer_or_prompt(session):
     profile = normalize_profile(session.profile)
@@ -145,29 +142,11 @@ def _auto_answer_or_prompt(session):
             'message': '⚠️ No pending question found. Please click Apply again.',
             'applyUrl': session.apply_url,
         }
+
+    if (current_q.input_type or '').lower() == 'file':
+        return _build_missing_payload(session, question=current_q, prompt=prompt)
 
     auto_answer = resolve_answer(current_q.label, profile, session.answers, options=current_q.options)
-
-    # ── File-upload field (CV / Resume) ─────────────────────────────────────
-    if (current_q.input_type or '').lower() == 'file':
-        if not auto_answer:
-            auto_answer = profile.get('resume_path')
-
-        if not auto_answer:
-            # No CV uploaded at all → tell the user to go to their Profile
-            delete_session(session.application_id)
-            return {
-                'success': True,
-                'status': 'needs_cv',
-                'message': (
-                    "📄 This form requires a CV / Resume file upload.\n\n"
-                    "You haven't uploaded a CV yet. Please go to your Profile page → "
-                    "Overview tab → CV / Resume section and upload your CV, "
-                    "then come back and click Apply again."
-                ),
-                'applyUrl': session.apply_url,
-            }
-    # ─────────────────────────────────────────────────────────────────────────
 
     if auto_answer:
         return _build_confirm_payload(
@@ -486,21 +465,33 @@ def continue_apply():
                 'applyUrl': session.apply_url,
             })
 
-        step = answer_current_and_advance(
-            driver=session.driver,
-            wait=session.wait,
-            questions=session.questions,
-            index=session.index,
-            answer=user_answer,
-        )
+        if (current_q.input_type or '').lower() == 'file':
+            user_answer = _resolve_resume_upload_answer(user_answer)
+            step = resume_upload_agent(
+                driver=session.driver,
+                wait=session.wait,
+                questions=session.questions,
+                index=session.index,
+                answer=user_answer,
+            )
+        else:
+            step = answer_current_and_advance(
+                driver=session.driver,
+                wait=session.wait,
+                questions=session.questions,
+                index=session.index,
+                answer=user_answer,
+            )
 
         status = step.get('status')
+        progress_messages = step.get('progressMessages') or []
         if status == 'submitted':
             delete_session(application_id)
             return jsonify({
                 'success': True,
                 'status': 'submitted',
                 'message': step.get('message') or '✅ Submitted the form.',
+                'progressMessages': progress_messages,
                 'applyUrl': session.apply_url,
             })
 
@@ -523,6 +514,7 @@ def continue_apply():
                 'message': retry_message,
                 'applicationId': session.application_id,
                 'missing': missing,
+                'progressMessages': progress_messages,
                 'applyUrl': session.apply_url,
             })
 
@@ -531,7 +523,10 @@ def continue_apply():
             session.index = int(step.get('index', session.index))
             if step.get('questions') is not None:
                 session.questions = step.get('questions')
-            return jsonify(_auto_answer_or_prompt(session))
+            response = _auto_answer_or_prompt(session)
+            if progress_messages:
+                response['progressMessages'] = progress_messages
+            return jsonify(response)
 
         # error — unrecoverable
         delete_session(application_id)
@@ -539,6 +534,7 @@ def continue_apply():
             'success': True,
             'status': 'error',
             'message': f"⚠️ {step.get('message') or 'Auto-apply could not complete.'}",
+            'progressMessages': progress_messages,
             'applyUrl': session.apply_url,
         })
 

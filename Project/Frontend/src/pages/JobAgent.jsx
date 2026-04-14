@@ -72,7 +72,7 @@ const JobAgent = () => {
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const [allJobMessages, setAllJobMessages] = useState([]);
-  // pendingApplication: { applicationId, missing: [], awaitingCheckbox: bool, awaitingConfirm: bool, suggestedAnswer: any }
+  // pendingApplication: { applicationId, missing: [], awaitingCheckbox: bool, awaitingConfirm: bool, awaitingFileUpload: bool, suggestedAnswer: any }
   const [pendingApplication, setPendingApplication] = useState(null);
   // Gmail login modal state
   const [gmailModal, setGmailModal] = useState({ show: false, applicationId: null, polling: false });
@@ -183,7 +183,7 @@ const JobAgent = () => {
       }
     }
     if ((q.input_type || "").toLowerCase() === "file") {
-      msg += "\nPlease send a local file path to upload.";
+      msg += "\nReply with 1 to upload cv.pdf from your Downloads folder automatically.";
     }
     return msg;
   };
@@ -305,6 +305,17 @@ const JobAgent = () => {
       return;
     }
 
+    const progressMessages = Array.isArray(applyData?.progressMessages)
+      ? applyData.progressMessages.filter((msg) => String(msg || "").trim())
+      : [];
+
+    if (progressMessages.length > 0) {
+      setMessages((prev) => [
+        ...prev,
+        ...progressMessages.map((text) => ({ sender: "ai", text: String(text) })),
+      ]);
+    }
+
     // ── CV not uploaded: direct user to their Profile page ──
     if (applyData?.status === "needs_cv") {
       setMessages((prev) => [
@@ -313,8 +324,7 @@ const JobAgent = () => {
           sender: "ai",
           text:
             "📄 This application form requires a CV / Resume file upload.\n\n" +
-            "You haven't uploaded a CV yet. Please go to your Profile page → " +
-            "Overview tab → CV / Resume section and upload your CV, then come back and click Apply again.",
+            "Put cv.pdf in your Downloads folder, then reply 1 when the file-upload question appears.",
         },
       ]);
       setPendingApplication(null);
@@ -339,6 +349,7 @@ const JobAgent = () => {
         missing,
         awaitingCheckbox: false,
         awaitingConfirm: true,
+        awaitingFileUpload: false,
         suggestedAnswer: applyData?.suggestedAnswer,
       });
       return;
@@ -346,6 +357,7 @@ const JobAgent = () => {
 
     if (applyData?.status === "needs_info") {
       const prompt = buildNeedsInfoPrompt(missing);
+      const isFileUpload = (firstQ?.input_type || "").toLowerCase() === "file";
       setMessages((prev) => [...prev, {
         sender: "ai",
         text: prompt || applyData.message,
@@ -358,6 +370,7 @@ const JobAgent = () => {
         missing,
         awaitingCheckbox: isCheckbox,
         awaitingConfirm: false,
+        awaitingFileUpload: isFileUpload,
         suggestedAnswer: null,
       });
     } else if (applyData?.status === "error") {
@@ -447,6 +460,7 @@ const JobAgent = () => {
       ...(prev || {}),
       awaitingConfirm: false,
       awaitingCheckbox: isCheckbox,
+      awaitingFileUpload: false,
       suggestedAnswer: null,
     }));
   };
@@ -756,7 +770,9 @@ const JobAgent = () => {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder={
-            pendingApplication?.awaitingCheckbox
+            pendingApplication?.awaitingFileUpload
+              ? "Type 1 to upload cv.pdf automatically..."
+              : pendingApplication?.awaitingCheckbox
               ? "Select options above, or type manually (e.g. 1, 3)..."
               : pendingApplication?.awaitingConfirm
               ? "Confirm or edit above, or type your answer..."

@@ -4,7 +4,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from selenium.common.exceptions import NoSuchElementException, TimeoutException, WebDriverException
 from selenium.webdriver.common.by import By
@@ -442,9 +442,49 @@ def next_prompt(questions: List[QuestionRef], index: int) -> Tuple[Optional[Ques
         else:
             msg += "\n\nReply with the option number (e.g. 1) or the option text."
     if q.input_type == "file":
-        msg += "\nPlease send a local file path to upload."
+        msg += "\nType: File upload"
+        msg += "\nReply with 1 to upload /Users/kamrul/Downloads/cv.pdf automatically."
 
     return q, msg
+
+
+def resume_upload_agent(
+    *,
+    driver,
+    wait: WebDriverWait,
+    questions: List[QuestionRef],
+    index: int,
+    answer: str,
+    timeout_s: int = 25,
+) -> Dict[str, Any]:
+    """Specialized resume upload handoff for Google Form file questions."""
+    if index >= len(questions):
+        return {"status": "error", "message": "No pending file-upload question to answer."}
+
+    q = questions[index]
+    if q.input_type != "file":
+        return {"status": "error", "message": "Current question is not a file-upload field."}
+
+    progress_messages: List[str] = []
+
+    def _record_progress(message: str) -> None:
+        if message and message not in progress_messages:
+            progress_messages.append(message)
+
+    result = answer_current_and_advance(
+        driver=driver,
+        wait=wait,
+        questions=questions,
+        index=index,
+        answer=answer,
+        timeout_s=timeout_s,
+        progress_callback=_record_progress,
+    )
+
+    if progress_messages:
+        result = {**result, "progressMessages": progress_messages}
+
+    return result
 
 
 def answer_current_and_advance(
@@ -455,6 +495,7 @@ def answer_current_and_advance(
     index: int,
     answer: str,
     timeout_s: int = 25,
+    progress_callback: Optional[Callable[[str], None]] = None,
 ) -> Dict[str, Any]:
     if index >= len(questions):
         return {"status": "error", "message": "No pending question to answer."}
@@ -471,6 +512,7 @@ def answer_current_and_advance(
             value=answer,
             wait=wait,
             driver=driver,
+            progress_callback=progress_callback,
         )
     except (WebDriverException, Exception) as exc:
         logger.info("Interactive fill failed for '%s' (%s): %s", q.label, q.input_type, exc)

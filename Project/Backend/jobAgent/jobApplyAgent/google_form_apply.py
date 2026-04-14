@@ -6,9 +6,10 @@ import re
 import shutil
 import socket
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 import requests
@@ -235,7 +236,7 @@ def _choice_text(el) -> str:
 
 
 def _find_question_title(block) -> str:
-    for sel in ("div[role='heading']", "span.M7eMe", "div.M7eMe", "div.Qr7Oae"):
+    for sel in ("div[role='heading']", "span.M7eMe", "div.M7eMe", "div.Qr7Oae", "div.z12JJ", "span.z12JJ"):
         try:
             t = block.find_element(By.CSS_SELECTOR, sel)
             title = _text(t)
@@ -259,6 +260,305 @@ def _is_required(block) -> bool:
     return title.endswith("*")
 
 
+def _find_add_file_button(block):
+    exact_selector = (
+        ".UywwFc-LgbsSe.UywwFc-LgbsSe-OWXEXe-dgl2Hf"
+        ".UywwFc-StrnGf-YYd4I-VtOx3e.UywwFc-kSE8rc-FoKg4d-sLO9V-YoZ4jf"
+    )
+    try:
+        for el in block.find_elements(By.CSS_SELECTOR, exact_selector):
+            try:
+                if el.is_displayed():
+                    return el
+            except Exception:
+                return el
+    except Exception:
+        pass
+
+    for el in block.find_elements(By.CSS_SELECTOR, "[role='button'], button"):
+        try:
+            text = f"{_text(el)} {(el.get_attribute('aria-label') or '').strip()}".strip().lower()
+        except Exception:
+            text = ""
+        if "add file" in text or "upload file" in text or "browse files" in text:
+            return el
+    return None
+
+
+def _find_upload_popup_control(driver: webdriver.Chrome, *, timeout_s: int = 5):
+    keywords = ("upload",)
+    selector_groups = (
+        "[role='button']",
+        "button",
+        "[role='tab']",
+        "[role='option']",
+        "[role='menuitem']",
+        "a",
+        "div",
+        "span",
+    )
+
+    def _search(root):
+        for selector in selector_groups:
+            try:
+                elements = root.find_elements(By.CSS_SELECTOR, selector)
+            except Exception:
+                continue
+
+            for el in elements:
+                try:
+                    if not el.is_displayed():
+                        continue
+                except Exception:
+                    continue
+
+                try:
+                    text = " ".join(
+                        [
+                            _text(el),
+                            (el.get_attribute("aria-label") or "").strip(),
+                            (el.get_attribute("title") or "").strip(),
+                        ]
+                    ).lower()
+                except Exception:
+                    text = ""
+
+                if text and any(keyword in text for keyword in keywords):
+                    return el
+
+        return None
+
+    deadline = time.time() + max(1, timeout_s)
+    while time.time() < deadline:
+        try:
+            element = _search(driver)
+            if element is not None:
+                return element
+        except Exception:
+            pass
+
+        try:
+            frames = driver.find_elements(By.TAG_NAME, "iframe")
+        except Exception:
+            frames = []
+
+        for frame in frames:
+            try:
+                driver.switch_to.frame(frame)
+            except Exception:
+                continue
+
+            try:
+                element = _search(driver)
+                if element is not None:
+                    return element
+            finally:
+                try:
+                    driver.switch_to.default_content()
+                except Exception:
+                    pass
+
+        time.sleep(0.25)
+
+    return None
+
+
+def _find_browse_button(driver: webdriver.Chrome, *, timeout_s: int = 5):
+    selector = (
+        ".UywwFc-LgbsSe.UywwFc-LgbsSe-OWXEXe-dgl2Hf"
+        ".UywwFc-StrnGf-YYd4I-VtOx3e.UywwFc-kSE8rc-FoKg4d-sLO9V-YoZ4jf"
+    )
+
+    def _search(root):
+        try:
+            elements = root.find_elements(By.CSS_SELECTOR, selector)
+        except Exception:
+            return None
+
+        for el in elements:
+            try:
+                if el.is_displayed():
+                    return el
+            except Exception:
+                return el
+        return None
+
+    deadline = time.time() + max(1, timeout_s)
+    while time.time() < deadline:
+        try:
+            element = _search(driver)
+            if element is not None:
+                return element
+        except Exception:
+            pass
+
+        try:
+            frames = driver.find_elements(By.TAG_NAME, "iframe")
+        except Exception:
+            frames = []
+
+        for frame in frames:
+            try:
+                driver.switch_to.frame(frame)
+            except Exception:
+                continue
+
+            try:
+                element = _search(driver)
+                if element is not None:
+                    return element
+            finally:
+                try:
+                    driver.switch_to.default_content()
+                except Exception:
+                    pass
+
+        time.sleep(0.25)
+
+    return None
+
+
+def _click_my_drive_option(driver: webdriver.Chrome, *, timeout_s: int = 5) -> bool:
+    keywords = ("my drive",)
+    selector_groups = (
+        "[role='button']",
+        "button",
+        "[role='tab']",
+        "[role='option']",
+        "[role='menuitem']",
+        "a",
+        "div",
+        "span",
+    )
+
+    def _find_and_click(root) -> bool:
+        for selector in selector_groups:
+            try:
+                elements = root.find_elements(By.CSS_SELECTOR, selector)
+            except Exception:
+                continue
+
+            for el in elements:
+                try:
+                    if not el.is_displayed():
+                        continue
+                except Exception:
+                    continue
+
+                try:
+                    text = " ".join(
+                        [
+                            _text(el),
+                            (el.get_attribute("aria-label") or "").strip(),
+                            (el.get_attribute("title") or "").strip(),
+                        ]
+                    ).lower()
+                except Exception:
+                    text = ""
+
+                if not text or not any(keyword in text for keyword in keywords):
+                    continue
+
+                try:
+                    _safe_click(driver, el)
+                    return True
+                except Exception:
+                    continue
+
+        return False
+
+    deadline = time.time() + max(1, timeout_s)
+    while time.time() < deadline:
+        try:
+            if _find_and_click(driver):
+                return True
+        except Exception:
+            pass
+
+        try:
+            frames = driver.find_elements(By.TAG_NAME, "iframe")
+        except Exception:
+            frames = []
+
+        for frame in frames:
+            try:
+                driver.switch_to.frame(frame)
+            except Exception:
+                continue
+
+            try:
+                if _find_and_click(driver):
+                    return True
+            finally:
+                try:
+                    driver.switch_to.default_content()
+                except Exception:
+                    pass
+
+        time.sleep(0.25)
+
+    return False
+
+
+def _upload_file_via_native_dialog(file_path: str) -> bool:
+    if not sys.platform.startswith("darwin"):
+        return False
+
+    file_path = os.path.abspath(os.path.expanduser(file_path or ""))
+    if not os.path.isfile(file_path):
+        return False
+
+    folder_path = os.path.dirname(file_path)
+    file_name = os.path.basename(file_path)
+    safe_folder = folder_path.replace("\\", "\\\\").replace('"', '\\"')
+    safe_name = file_name.replace("\\", "\\\\").replace('"', '\\"')
+    script = f'''tell application "System Events"
+    tell application "Google Chrome" to activate
+    tell process "Google Chrome"
+        set frontmost to true
+    end tell
+    delay 0.5
+    keystroke "g" using {{command down, shift down}}
+    delay 0.5
+    keystroke "{safe_folder}"
+    key code 36
+    delay 0.7
+    keystroke "{safe_name}"
+    delay 0.2
+    key code 36
+end tell'''
+
+    try:
+        subprocess.run(["osascript", "-e", script], check=True, capture_output=True, text=True)
+        return True
+    except Exception:
+        return False
+
+
+def _record_progress(progress_callback: Optional[Callable[[str], None]], message: str) -> None:
+    if progress_callback is None:
+        return
+    try:
+        progress_callback(message)
+    except Exception:
+        pass
+
+
+def _looks_like_file_upload(block) -> bool:
+    if block.find_elements(By.CSS_SELECTOR, "input[type='file']"):
+        return True
+
+    if _find_add_file_button(block) is not None:
+        return True
+
+    try:
+        body = re.sub(r"\s+", " ", _text(block).lower())
+    except Exception:
+        body = ""
+
+    return any(marker in body for marker in ("add file", "upload file", "file upload"))
+
+
 def _detect_input_type(block) -> Tuple[str, List[str]]:
     # Google Forms often uses a contenteditable textbox instead of <input>/<textarea>
     # Example: <div role="textbox" aria-multiline="true|false" contenteditable="true">...
@@ -272,6 +572,9 @@ def _detect_input_type(block) -> Tuple[str, List[str]]:
 
     # file upload
     if block.find_elements(By.CSS_SELECTOR, "input[type='file']"):
+        return "file", []
+
+    if _looks_like_file_upload(block):
         return "file", []
 
     if block.find_elements(By.CSS_SELECTOR, "textarea"):
@@ -827,6 +1130,35 @@ def _first_present(block, css: str):
     return els[0]
 
 
+def _find_file_input(driver: webdriver.Chrome, block=None):
+    scopes = []
+    if block is not None:
+        scopes.append(block)
+    scopes.append(driver)
+
+    for scope in scopes:
+        try:
+            inputs = scope.find_elements(By.CSS_SELECTOR, "input[type='file']")
+        except Exception:
+            continue
+
+        for file_input in inputs:
+            try:
+                if file_input.is_enabled():
+                    return file_input
+            except Exception:
+                return file_input
+
+    return None
+
+
+def _file_input_has_files(driver: webdriver.Chrome, file_input) -> bool:
+    try:
+        return bool(driver.execute_script("return !!(arguments[0] && arguments[0].files && arguments[0].files.length);", file_input))
+    except Exception:
+        return False
+
+
 def _clear_and_type(driver: webdriver.Chrome, el, value: str) -> None:
     _safe_click(driver, el)
 
@@ -874,6 +1206,7 @@ def _fill_block(
     value: str,
     wait: WebDriverWait,
     driver: webdriver.Chrome,
+    progress_callback: Optional[Callable[[str], None]] = None,
 ) -> None:
     if input_type in {"text", "email"}:
         # Prefer real inputs, but support Google Forms' contenteditable textbox too.
@@ -894,17 +1227,102 @@ def _fill_block(
         return
 
     if input_type == "file":
-        file_input = _first_present(block, "input[type='file']")
-        _scroll_into_view(driver, file_input)
-        try:
-            file_input.send_keys(value)
-        except WebDriverException:
-            # Some forms wrap/overlay the real input. JS-click can help focus before send_keys.
+        raw_value = (value or "").strip()
+        if raw_value in {"", "1", "y", "yes", "resume", "cv"}:
+            file_path = os.path.expanduser("~/Downloads/cv.pdf")
+        else:
+            expanded_value = os.path.expanduser(raw_value)
+            if not os.path.isabs(expanded_value) and os.path.sep not in expanded_value:
+                download_candidate = os.path.expanduser(f"~/Downloads/{expanded_value}")
+                if os.path.isfile(download_candidate):
+                    expanded_value = download_candidate
+            file_path = os.path.abspath(expanded_value)
+
+        if not os.path.isfile(file_path):
+            raise FileNotFoundError(f"File upload path does not exist: {file_path}")
+
+        file_input = _find_file_input(driver, block)
+        add_file_button = _find_add_file_button(block)
+
+        def _file_upload_completed() -> bool:
+            file_name = os.path.basename(file_path).lower()
+            sources = []
             try:
-                _safe_click(driver, file_input)
+                sources.append(_text(block).lower())
             except Exception:
                 pass
-            file_input.send_keys(value)
+            try:
+                sources.append((driver.find_element(By.TAG_NAME, "body").text or "").lower())
+            except Exception:
+                pass
+            if file_input is not None and _file_input_has_files(driver, file_input):
+                return True
+            return any(file_name in src for src in sources)
+
+        if add_file_button is not None:
+            _safe_click(driver, add_file_button)
+            time.sleep(0.8)
+
+            # Open the insert-file chooser in the order requested by the user.
+            _click_my_drive_option(driver, timeout_s=2)
+
+            upload_control = _find_upload_popup_control(driver, timeout_s=3)
+            if upload_control is not None:
+                _safe_click(driver, upload_control)
+                time.sleep(0.8)
+
+            browse_button = _find_browse_button(driver, timeout_s=3)
+            if browse_button is not None:
+                _safe_click(driver, browse_button)
+                _record_progress(progress_callback, "button clicked")
+                time.sleep(0.8)
+
+                _record_progress(progress_callback, "searching files")
+
+                if sys.platform.startswith("darwin"):
+                    if _upload_file_via_native_dialog(file_path):
+                        _record_progress(progress_callback, "file clicked")
+                        deadline = time.time() + 5
+                        while time.time() < deadline:
+                            if _file_upload_completed():
+                                return
+                            time.sleep(0.2)
+
+        if file_input is None:
+            if add_file_button is not None:
+                _safe_click(driver, add_file_button)
+                time.sleep(0.5)
+                file_input = _find_file_input(driver, block)
+
+        if file_input is None:
+            raise NoSuchElementException("No file upload input found for Google Form question.")
+
+        _scroll_into_view(driver, file_input)
+
+        try:
+            file_input.send_keys(file_path)
+        except WebDriverException:
+            # Some Google Forms uploads keep the real input hidden until the popup opens.
+            # Reveal the input and try again before falling back to any native picker flow.
+            try:
+                driver.execute_script(
+                    "arguments[0].removeAttribute('hidden'); arguments[0].style.display='block'; arguments[0].style.visibility='visible'; arguments[0].style.opacity='1';",
+                    file_input,
+                )
+            except Exception:
+                pass
+            file_input.send_keys(file_path)
+
+        _record_progress(progress_callback, "file clicked")
+
+        deadline = time.time() + 3
+        while time.time() < deadline:
+            if _file_input_has_files(driver, file_input):
+                return
+            time.sleep(0.15)
+
+        if not _file_input_has_files(driver, file_input):
+            raise WebDriverException(f"File upload did not register for: {file_path}")
         return
 
     if input_type == "radio":
