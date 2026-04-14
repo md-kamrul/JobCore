@@ -10,6 +10,7 @@ import Profile from "../pages/Profile";
 import JobAgent from "../pages/JobAgent";
 import MockInterview from "../pages/MockInterview";
 import ResumeChecker from "../pages/ResumeChecker";
+import ProtectedRoute from "./ProtectedRoute";
 
 export const router = createBrowserRouter([
   {
@@ -21,9 +22,30 @@ export const router = createBrowserRouter([
         { path: "/login", element: <Login></Login> },
         { path: "/signup", element: <Signup></Signup> },
         { path: "/profile", element: <Profile></Profile>},
-        { path: "/job-agent", element: <JobAgent></JobAgent>},
-        { path: "/mock-interview", element: <MockInterview></MockInterview>},
-        { path: "/resume-checker", element: <ResumeChecker></ResumeChecker>},
+        {
+          path: "/job-agent",
+          element: (
+            <ProtectedRoute>
+              <JobAgent></JobAgent>
+            </ProtectedRoute>
+          ),
+        },
+        {
+          path: "/mock-interview",
+          element: (
+            <ProtectedRoute>
+              <MockInterview></MockInterview>
+            </ProtectedRoute>
+          ),
+        },
+        {
+          path: "/resume-checker",
+          element: (
+            <ProtectedRoute>
+              <ResumeChecker></ResumeChecker>
+            </ProtectedRoute>
+          ),
+        },
     ],
   },
 ]);

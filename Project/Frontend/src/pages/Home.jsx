@@ -9,7 +9,7 @@ const Home = () => {
             cta: 'Start Practice',
             to: '/mock-interview',
             badge: 'MI',
-            image: '/media/homepage-preview.png',
+            image: '/mock-interview.png',
         },
         {
             title: 'Resume Checker',
@@ -17,7 +17,7 @@ const Home = () => {
             cta: 'Analyze Resume',
             to: '/resume-checker',
             badge: 'RC',
-            image: '/media/resume-preview.png',
+            image: '/resume-checker.png',
         },
         {
             title: 'Job Agent',
@@ -25,7 +25,7 @@ const Home = () => {
             cta: 'Explore Jobs',
             to: '/job-agent',
             badge: 'JA',
-            image: '/media/job-agent-preview.png',
+            image: '/job-agent.png',
         },
         {
             title: 'Profile Setup',
@@ -33,7 +33,7 @@ const Home = () => {
             cta: 'Update Profile',
             to: '/profile',
             badge: 'PF',
-            image: '/media/homepage-preview.png',
+            image: '/profile.png',
         },
     ];
 
