@@ -1711,11 +1711,21 @@ def _fill_block(
         return
 
     if input_type == "dropdown":
-        listbox = _first_visible(block, "div[role='listbox']")
+        try:
+            listbox = _first_visible(block, "div[role='listbox'], [role='combobox']")
+        except NoSuchElementException:
+            listbox = _first_visible(block, "div[role='listbox']")
+
         _ensure_listbox_open(listbox, driver)
 
-        visible_rows = _read_open_dropdown_options(driver, wait, include_hidden=False, listbox=listbox)
-        all_rows = _read_open_dropdown_options(driver, wait, include_hidden=True, listbox=listbox)
+        try:
+            visible_rows = _read_open_dropdown_options(driver, wait, include_hidden=False, listbox=listbox)
+        except Exception:
+            visible_rows = []
+        try:
+            all_rows = _read_open_dropdown_options(driver, wait, include_hidden=True, listbox=listbox)
+        except Exception:
+            all_rows = []
         rows = all_rows or visible_rows
         actionable_rows = [(label, el) for label, el in rows if not _is_placeholder_option(label)] or rows
 
@@ -1728,7 +1738,8 @@ def _fill_block(
         for label_text, opt_el in actionable_rows:
             if best_text and _is_option_match(label_text, best_text):
                 _safe_click(driver, opt_el)
-                return
+                if _dropdown_value_looks_selected(listbox, best_text):
+                    return
 
         m = re.search(r"\b(\d{1,3})\b", str(value or ""))
         if m:
@@ -1736,7 +1747,9 @@ def _fill_block(
                 idx = int(m.group(1))
                 if 1 <= idx <= len(actionable_rows):
                     _safe_click(driver, actionable_rows[idx - 1][1])
-                    return
+                    clicked_text = actionable_rows[idx - 1][0]
+                    if _dropdown_value_looks_selected(listbox, clicked_text):
+                        return
             except Exception:
                 pass
 
@@ -1747,6 +1760,36 @@ def _fill_block(
                 return
             if _select_dropdown_by_typing(listbox, driver, best_text):
                 return
+
+            # Try one more time by directly clicking visible global option nodes by text.
+            try:
+                direct_candidates = driver.find_elements(By.CSS_SELECTOR, "[role='option']")
+            except Exception:
+                direct_candidates = []
+            for candidate in direct_candidates:
+                try:
+                    if not candidate.is_displayed():
+                        continue
+                except Exception:
+                    continue
+                c_text = (_choice_text(candidate) or _text(candidate) or "").strip()
+                if c_text and _is_option_match(c_text, best_text):
+                    _safe_click(driver, candidate)
+                    if _dropdown_value_looks_selected(listbox, best_text):
+                        return
+
+        # Final fallback: even if we could not derive a best option label from scraped
+        # options, still try selecting directly from the user's provided/confirmed text.
+        raw_value = str(value or "").strip()
+        if raw_value:
+            if _select_dropdown_by_navigation(listbox, driver, raw_value):
+                return
+            if _select_dropdown_by_typing(listbox, driver, raw_value):
+                return
+
+            # If user provided a value but we still couldn't select anything, fail fast.
+            # Caller will re-ask required questions instead of silently moving forward.
+            raise WebDriverException(f"Dropdown selection failed for value: {raw_value}")
 
         # Default only when value is empty.
         if not str(value or "").strip() and actionable_rows:

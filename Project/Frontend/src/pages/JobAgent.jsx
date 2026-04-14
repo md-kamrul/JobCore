@@ -639,11 +639,13 @@ const JobAgent = () => {
             }
           } else {
             const resolved = resolveSingleOption(options, userQuery);
-            if (!resolved) {
+            if (!resolved && inputType !== "dropdown") {
               sendInvalidPrompt();
               return;
             }
-            answerValue = resolved;
+            // For dropdown, backend has richer fallback selection logic (typing/navigation),
+            // so pass raw user text when local exact mapping fails.
+            answerValue = resolved || userQuery;
           }
         }
 
