@@ -125,14 +125,14 @@ const Home = () => {
                             preload="metadata"
                             poster="/media/homepage-preview.png"
                         >
-                            <source src="/media/project-overview.mp4" type="video/mp4" />
+                            <source src="/CSE499-Final-Demo.mp4" type="video/mp4" />
                             Your browser does not support the project overview video.
                         </video>
                     </div>
 
                     <div className="mt-4 flex flex-wrap gap-3">
                         <a
-                            href="/media/project-overview.mp4"
+                            href="/CSE499-Final-Demo.mp4"
                             target="_blank"
                             rel="noreferrer"
                             className="px-4 py-2 rounded-lg text-sm font-medium transition"
