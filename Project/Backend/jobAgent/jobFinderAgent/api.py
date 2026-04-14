@@ -18,7 +18,11 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from jobApplyAgent.google_form_apply import is_google_form_url, resolve_final_url
+from jobApplyAgent.google_form_apply import (
+    is_google_form_url,
+    resolve_final_url,
+    _auto_check_email_record_permissions,
+)
 from jobApplyAgent.interactive_google_form import (
     answer_current_and_advance,
     is_gmail_logged_in,
@@ -78,9 +82,66 @@ def _prepare_cv(profile: dict) -> dict:
     return profile
 
 
+def _is_dropdown_placeholder_option(text: str) -> bool:
+    t = re.sub(r"\s+", " ", str(text or "").strip().lower())
+    if not t:
+        return True
+
+    if t in {"choose", "choose an option", "select", "select an option", "option", "--"}:
+        return True
+    if "বাছুন" in t or "নির্বাচন করুন" in t:
+        return True
+
+    cleaned = re.sub(r"\(.*?\)", "", t).strip()
+    if cleaned in {"choose", "select", "choose option", "select option"}:
+        return True
+
+    return False
+
+
+def _normalize_options(options, *, input_type: str = ""):
+    if not isinstance(options, (list, tuple)):
+        return []
+    out = []
+    seen = set()
+    for raw in options:
+        parts = [p.strip() for p in re.split(r"[\r\n]+", str(raw or "")) if p.strip()]
+        if not parts and str(raw or "").strip():
+            parts = [str(raw).strip()]
+        for part in parts:
+            if (input_type or "").lower() == "dropdown" and _is_dropdown_placeholder_option(part):
+                continue
+            key = re.sub(r"\s+", " ", part).strip().lower()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            out.append(part)
+    return out
+
+
+def _is_email_record_checkbox(question) -> bool:
+    if not question:
+        return False
+    if str(getattr(question, "input_type", "") or "").lower() != "checkbox":
+        return False
+
+    label = str(getattr(question, "label", "") or "")
+    options = getattr(question, "options", None) or []
+    text = re.sub(r"\s+", " ", f"{label} {' '.join([str(o or '') for o in options])}").strip().lower()
+
+    if "record my email" in text or "record email" in text:
+        return True
+    if "email" in text and any(k in text for k in ("record", "save", "store", "keep")):
+        return True
+    if "ইমেইল" in text and any(k in text for k in ("রেকর্ড", "সংরক্ষণ", "সেভ", "রাখ")):
+        return True
+    return False
+
+
 def _build_missing_payload(session, *, question, prompt):
     missing = []
     if question:
+        question.options = _normalize_options(question.options, input_type=question.input_type)
         missing = [{
             'label': question.label,
             'required': question.required,
@@ -100,6 +161,7 @@ def _build_missing_payload(session, *, question, prompt):
 def _build_confirm_payload(session, *, question, prompt, suggested_answer: str):
     missing = []
     if question:
+        question.options = _normalize_options(question.options, input_type=question.input_type)
         missing = [{
             'label': question.label,
             'required': question.required,
@@ -133,30 +195,57 @@ def _resolve_resume_upload_answer(raw_answer: object) -> str:
 def _auto_answer_or_prompt(session):
     profile = normalize_profile(session.profile)
 
-    current_q, prompt = next_prompt(session.questions, session.index)
-    if not current_q:
-        delete_session(session.application_id)
-        return {
-            'success': True,
-            'status': 'error',
-            'message': '⚠️ No pending question found. Please click Apply again.',
-            'applyUrl': session.apply_url,
-        }
+    # Pre-task: check Google Form email-record permission checkbox before normal Q&A.
+    if session.driver:
+        try:
+            _auto_check_email_record_permissions(session.driver)
+        except Exception:
+            pass
 
-    if (current_q.input_type or '').lower() == 'file':
+    # Auto-check consent-like email-record checkbox before asking any other questions.
+    # This keeps the chat flow focused on actual application questions.
+    auto_guard = 0
+    while auto_guard < 8:
+        auto_guard += 1
+
+        current_q, prompt = next_prompt(session.questions, session.index)
+        if not current_q:
+            delete_session(session.application_id)
+            return {
+                'success': True,
+                'status': 'error',
+                'message': '⚠️ No pending question found. Please click Apply again.',
+                'applyUrl': session.apply_url,
+            }
+
+        if (current_q.input_type or '').lower() == 'file':
+            return _build_missing_payload(session, question=current_q, prompt=prompt)
+
+        current_q.options = _normalize_options(current_q.options, input_type=current_q.input_type)
+
+        if _is_email_record_checkbox(current_q):
+            # Permission checkbox was handled by the pre-task; skip it in the queue.
+            session.index += 1
+            continue
+
+        auto_answer = resolve_answer(current_q.label, profile, session.answers, options=current_q.options)
+
+        if auto_answer:
+            return _build_confirm_payload(
+                session,
+                question=current_q,
+                prompt=prompt,
+                suggested_answer=str(auto_answer),
+            )
+
         return _build_missing_payload(session, question=current_q, prompt=prompt)
 
-    auto_answer = resolve_answer(current_q.label, profile, session.answers, options=current_q.options)
-
-    if auto_answer:
-        return _build_confirm_payload(
-            session,
-            question=current_q,
-            prompt=prompt,
-            suggested_answer=str(auto_answer),
-        )
-
-    return _build_missing_payload(session, question=current_q, prompt=prompt)
+    return {
+        'success': True,
+        'status': 'error',
+        'message': '⚠️ Could not advance form automatically. Please click Apply again.',
+        'applyUrl': session.apply_url,
+    }
 
 @app.route('/api/health', methods=['GET'])
 def health_check():

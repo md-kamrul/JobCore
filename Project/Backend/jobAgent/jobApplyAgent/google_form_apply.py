@@ -8,6 +8,7 @@ import socket
 import subprocess
 import sys
 import time
+from difflib import SequenceMatcher
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
@@ -587,7 +588,7 @@ def _detect_input_type(block) -> Tuple[str, List[str]]:
     if block.find_elements(By.CSS_SELECTOR, "input[type='text']"):
         return "text", []
 
-    radios = block.find_elements(By.CSS_SELECTOR, "div[role='radio']")
+    radios = block.find_elements(By.CSS_SELECTOR, "[role='radio']")
     if radios:
         options = [_choice_text(r) for r in radios]
         options = [o.strip() for o in options if (o or "").strip()]
@@ -596,7 +597,7 @@ def _detect_input_type(block) -> Tuple[str, List[str]]:
         options = [o for o in options if not (o in seen or seen.add(o))]
         return "radio", options
 
-    checkboxes = block.find_elements(By.CSS_SELECTOR, "div[role='checkbox']")
+    checkboxes = block.find_elements(By.CSS_SELECTOR, "[role='checkbox']")
     if checkboxes:
         options = [_choice_text(c) for c in checkboxes]
         options = [o.strip() for o in options if (o or "").strip()]
@@ -614,45 +615,126 @@ def _pick_best_option(options: List[str], answer: str) -> Optional[str]:
     if not options or not answer:
         return None
 
-    a = answer.strip().lower()
+    # Flatten newline-bundled labels so one raw option containing
+    # "A\nB\nC" becomes three selectable options.
+    flat_options = _flatten_option_labels([str(o or "") for o in options])
+    if not flat_options:
+        return None
+
+    def _norm(text: str) -> str:
+        return re.sub(r"\s+", " ", re.sub(r"[^\w]+", " ", (text or "").lower())).strip()
+
+    a_raw = answer.strip()
+    a = _norm(a_raw)
 
     # numeric selection: '1' or '1.' or 'option 1' -> map to option index
-    m = re.search(r"\b(\d{1,3})\b", a)
+    m = re.search(r"\b(\d{1,3})\b", a_raw)
     if m:
         try:
             idx = int(m.group(1))
-            if 1 <= idx <= len(options):
-                return options[idx - 1]
+            if 1 <= idx <= len(flat_options):
+                return flat_options[idx - 1]
         except Exception:
             pass
 
     # single-letter selection: 'a' -> 1, 'b' -> 2
     if len(a) == 1 and a.isalpha():
         idx = ord(a.lower()) - ord("a") + 1
-        if 1 <= idx <= len(options):
-            return options[idx - 1]
+        if 1 <= idx <= len(flat_options):
+            return flat_options[idx - 1]
 
     # exact / case-insensitive
-    for o in options:
-        if o.strip().lower() == a:
+    for o in flat_options:
+        if _norm(o) == a:
             return o
 
     # contains
-    for o in options:
-        if a in o.strip().lower() or o.strip().lower() in a:
+    for o in flat_options:
+        on = _norm(o)
+        if a in on or on in a:
             return o
 
+    # Education-level aliases commonly used in profile fields.
+    aliases = {
+        "undergraduate": {"undergraduate", "bachelor", "bsc", "b tech", "btech", "honours", "hons"},
+        "postgraduate": {"postgraduate", "masters", "master", "msc", "mba", "mphil"},
+        "phd": {"phd", "doctorate", "doctoral", "d phil"},
+        "student": {"student", "currently", "pursuing", "enrolled", "studying"},
+        "graduate": {"graduate", "graduated", "completed", "alumni"},
+    }
+    a_tokens = set(a.split())
+    inferred = set()
+    for alias, words in aliases.items():
+        if any(w in a for w in words) or words.intersection(a_tokens):
+            inferred.add(alias)
+
+    if inferred:
+        for o in flat_options:
+            on = _norm(o)
+            if any(alias in on for alias in inferred):
+                return o
+
+    # Experience range matching, e.g. answer "2 years" vs option "1-3 years".
+    years_match = re.search(r"\b(\d{1,2})\s*(?:\+|years?|yrs?)?\b", a)
+    if years_match:
+        years = int(years_match.group(1))
+        for o in flat_options:
+            on = _norm(o)
+            range_match = re.search(r"\b(\d{1,2})\s*(?:-|–|to)\s*(\d{1,2})\b", on)
+            if range_match:
+                lo = int(range_match.group(1))
+                hi = int(range_match.group(2))
+                if lo <= years <= hi:
+                    return o
+            plus_match = re.search(r"\b(\d{1,2})\s*\+", on)
+            if plus_match and years >= int(plus_match.group(1)):
+                return o
+
     # light fuzzy: choose option with max token overlap
-    a_tokens = set(re.findall(r"[a-z0-9]+", a))
+    a_tokens = set(a.split())
     best = None
-    best_score = 0
-    for o in options:
-        o_tokens = set(re.findall(r"[a-z0-9]+", o.lower()))
-        score = len(a_tokens & o_tokens)
+    best_score = 0.0
+    for o in flat_options:
+        on = _norm(o)
+        if not on:
+            continue
+        o_tokens = set(on.split())
+        overlap = len(a_tokens & o_tokens)
+        ratio = SequenceMatcher(None, a, on).ratio()
+        score = (overlap * 2.0) + ratio
         if score > best_score:
             best_score = score
             best = o
-    return best if best_score > 0 else None
+    return best if best_score >= 1.2 else None
+
+
+def _is_checkbox_checked(el) -> bool:
+    try:
+        aria = (el.get_attribute("aria-checked") or "").strip().lower()
+        if aria in {"true", "false"}:
+            return aria == "true"
+    except Exception:
+        pass
+    try:
+        return bool(el.get_attribute("checked"))
+    except Exception:
+        return False
+
+
+def _set_checkbox_state(driver: webdriver.Chrome, el, should_check: bool) -> bool:
+    """Set checkbox element state to checked/unchecked with best-effort verification."""
+    current = _is_checkbox_checked(el)
+    if current == should_check:
+        return True
+
+    _safe_click(driver, el)
+    updated = _is_checkbox_checked(el)
+    if updated == should_check:
+        return True
+
+    # Retry once for flaky click overlays.
+    _safe_click(driver, el)
+    return _is_checkbox_checked(el) == should_check
 
 
 def _is_placeholder_option(text: str) -> bool:
@@ -681,6 +763,103 @@ def _is_placeholder_option(text: str) -> bool:
         return True
 
     return False
+
+
+def _is_email_record_checkbox(label: str, options: Optional[List[str]] = None) -> bool:
+    """Detect Google Form 'Record my email' style checkbox questions."""
+    parts = [str(label or "")]
+    for o in options or []:
+        parts.append(str(o or ""))
+    text = re.sub(r"\s+", " ", " ".join(parts).strip().lower())
+    if not text:
+        return False
+
+    # English variants
+    if "record my email" in text or "record email" in text:
+        return True
+    if "email" in text and any(k in text for k in ("record", "save", "store", "keep")):
+        return True
+
+    # Bengali variants
+    if "ইমেইল" in text and any(k in text for k in ("রেকর্ড", "সংরক্ষণ", "সেভ", "রাখ")):
+        return True
+
+    return False
+
+
+def _find_best_email_record_checkbox(block):
+    checkboxes = block.find_elements(By.CSS_SELECTOR, "[role='checkbox']")
+    if not checkboxes:
+        return None
+
+    for c in checkboxes:
+        label_text = (_choice_text(c) or _text(c) or "").strip().lower()
+        if "record" in label_text and "email" in label_text:
+            return c
+        if "ইমেইল" in label_text and any(k in label_text for k in ("রেকর্ড", "সংরক্ষণ", "সেভ", "রাখ")):
+            return c
+
+    return checkboxes[0]
+
+
+def _looks_like_email_permission_text(text: str) -> bool:
+    t = re.sub(r"\s+", " ", (text or "").strip().lower())
+    if not t:
+        return False
+
+    # English phrasing used by Google Forms email-record consent.
+    if "record my email" in t or "record email" in t:
+        return True
+    if "email to be included with my response" in t:
+        return True
+    if "email" in t and "response" in t and any(k in t for k in ("record", "include", "included", "save", "store")):
+        return True
+
+    # Bengali phrasing fallback.
+    if "ইমেইল" in t and any(k in t for k in ("রেকর্ড", "সংরক্ষণ", "সেভ", "রাখ")):
+        return True
+
+    return False
+
+
+def _auto_check_email_record_permissions(driver: webdriver.Chrome) -> int:
+    """Pre-task: find and check visible Google Form email-record consent checkboxes."""
+    checked_count = 0
+    try:
+        checkboxes = driver.find_elements(By.CSS_SELECTOR, "[role='checkbox']")
+    except Exception:
+        return 0
+
+    for box in checkboxes:
+        try:
+            if not box.is_displayed():
+                continue
+        except Exception:
+            continue
+
+        # Build rich context text from checkbox + nearest listitem block.
+        context = []
+        try:
+            context.append(_choice_text(box))
+        except Exception:
+            pass
+        try:
+            parent_block = box.find_element(By.XPATH, "./ancestor::*[@role='listitem'][1]")
+            context.append(_text(parent_block))
+        except Exception:
+            try:
+                context.append(_text(box))
+            except Exception:
+                pass
+
+        merged_text = " ".join([c for c in context if c])
+        if not _looks_like_email_permission_text(merged_text):
+            continue
+
+        if _set_checkbox_state(driver, box, True):
+            checked_count += 1
+
+    return checked_count
 
 
 def _ensure_listbox_open(listbox, driver: webdriver.Chrome) -> None:
@@ -826,6 +1005,16 @@ def _read_open_dropdown_options(
         if scoped:
             return scoped
 
+        # Some forms render option labels via class-based nodes before role=option
+        # elements become discoverable.
+        if listbox is not None:
+            try:
+                class_rows = _class_based_dropdown_rows(listbox, drv, include_hidden=False)
+                if class_rows:
+                    return [row[1] for row in class_rows]
+            except Exception:
+                pass
+
         # Fallback: any visible option on page.
         opts = drv.find_elements(By.CSS_SELECTOR, "div[role='option'], li[role='option']")
         visible = []
@@ -961,6 +1150,100 @@ def _active_dropdown_option_text(listbox, driver: webdriver.Chrome) -> str:
         return data_value
     except Exception:
         return ""
+
+
+def _norm_option_text(text: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"[^\w]+", " ", (text or "").lower())).strip()
+
+
+def _is_option_match(candidate: str, target: str) -> bool:
+    c = _norm_option_text(candidate)
+    t = _norm_option_text(target)
+    if not c or not t:
+        return False
+    return c == t or t in c or c in t
+
+
+def _dropdown_value_looks_selected(listbox, target_text: str) -> bool:
+    target = _norm_option_text(target_text)
+    if not target:
+        return False
+    try:
+        observed = " ".join([
+            _text(listbox) or "",
+            (listbox.get_attribute("aria-label") or "").strip(),
+            (listbox.get_attribute("data-value") or "").strip(),
+            (listbox.get_attribute("aria-activedescendant") or "").strip(),
+        ])
+    except Exception:
+        observed = _text(listbox) or ""
+    return target in _norm_option_text(observed)
+
+
+def _select_dropdown_by_navigation(
+    listbox,
+    driver: webdriver.Chrome,
+    target_text: str,
+    *,
+    max_steps: int = 160,
+) -> bool:
+    """Fallback: iterate options with keyboard and select target via Enter."""
+    target = _norm_option_text(target_text)
+    if not target:
+        return False
+
+    try:
+        _safe_click(driver, listbox)
+        _ensure_listbox_open(listbox, driver)
+        try:
+            listbox.send_keys(Keys.HOME)
+        except Exception:
+            pass
+
+        stale_hits = 0
+        for _ in range(max_steps):
+            current = _active_dropdown_option_text(listbox, driver)
+            if current and _is_option_match(current, target_text):
+                try:
+                    listbox.send_keys(Keys.ENTER)
+                    return True
+                except Exception:
+                    return False
+
+            before = _norm_option_text(current)
+            try:
+                listbox.send_keys(Keys.ARROW_DOWN)
+            except Exception:
+                continue
+            after = _norm_option_text(_active_dropdown_option_text(listbox, driver))
+            if after and after == before:
+                stale_hits += 1
+            else:
+                stale_hits = 0
+            if stale_hits >= 10:
+                break
+    except Exception:
+        return False
+
+    return False
+
+
+def _select_dropdown_by_typing(listbox, driver: webdriver.Chrome, target_text: str) -> bool:
+    """Fallback: type option text into listbox then press Enter."""
+    if not str(target_text or "").strip():
+        return False
+    try:
+        _safe_click(driver, listbox)
+        _ensure_listbox_open(listbox, driver)
+        try:
+            listbox.send_keys(Keys.HOME)
+        except Exception:
+            pass
+        listbox.send_keys(str(target_text))
+        listbox.send_keys(Keys.ENTER)
+        return _dropdown_value_looks_selected(listbox, str(target_text))
+    except Exception:
+        return False
 
 
 def _collect_dropdown_options_by_navigation(listbox, driver: webdriver.Chrome, *, max_steps: int = 120) -> List[str]:
@@ -1362,10 +1645,27 @@ def _fill_block(
 
     if input_type == "checkbox":
         # support comma-separated list
+        is_email_record = _is_email_record_checkbox(label, options)
+        raw_value = str(value or "").strip().lower()
+
+        # Special handling requested by product: ask user yes/no for email record checkbox.
+        if is_email_record:
+            if raw_value in {"yes", "y", "true", "1", "check", "checked"}:
+                target = _find_best_email_record_checkbox(block)
+                if target is not None:
+                    _set_checkbox_state(driver, target, True)
+                return
+            if raw_value in {"no", "n", "false", "0", "skip", "leave unchecked", "__skip_checkbox__"}:
+                target = _find_best_email_record_checkbox(block)
+                if target is not None:
+                    _set_checkbox_state(driver, target, False)
+                return
+
         desired = [v.strip() for v in re.split(r"[,;/]", value) if v.strip()]
-        checkboxes = block.find_elements(By.CSS_SELECTOR, "div[role='checkbox']")
+        checkboxes = block.find_elements(By.CSS_SELECTOR, "[role='checkbox']")
         if not desired:
-            if checkboxes:
+            # Do not default-click email record checkbox when answer is empty.
+            if checkboxes and not is_email_record:
                 _safe_click(driver, checkboxes[0])
             return
         # Precompute checkbox labels for matching
@@ -1418,11 +1718,15 @@ def _fill_block(
         all_rows = _read_open_dropdown_options(driver, wait, include_hidden=True, listbox=listbox)
         rows = all_rows or visible_rows
         actionable_rows = [(label, el) for label, el in rows if not _is_placeholder_option(label)] or rows
-        labels = [label for label, _ in actionable_rows]
-        best_text = _pick_best_option([t for t in labels if t], value)
+
+        # Match against the full known option universe, not only visible rows.
+        dom_labels = [label for label, _ in actionable_rows if label]
+        known_labels = _flatten_option_labels([str(o or "") for o in (options or [])])
+        merged_labels = _flatten_option_labels(known_labels + dom_labels)
+        best_text = _pick_best_option(merged_labels, value)
 
         for label_text, opt_el in actionable_rows:
-            if best_text and label_text.strip().lower() == best_text.strip().lower():
+            if best_text and _is_option_match(label_text, best_text):
                 _safe_click(driver, opt_el)
                 return
 
@@ -1435,6 +1739,14 @@ def _fill_block(
                     return
             except Exception:
                 pass
+
+        # If user supplied/confirmed text but target isn't in current DOM subset,
+        # use keyboard navigation fallback to reach virtualized/lazy-rendered options.
+        if str(value or "").strip() and best_text:
+            if _select_dropdown_by_navigation(listbox, driver, best_text):
+                return
+            if _select_dropdown_by_typing(listbox, driver, best_text):
+                return
 
         # Default only when value is empty.
         if not str(value or "").strip() and actionable_rows:
@@ -1500,6 +1812,10 @@ def apply_google_form(
 
         for _ in range(max_pages):
             wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div[role='listitem']")))
+
+            # Pre-task before Q&A filling: auto-check email-record consent checkbox if present.
+            _auto_check_email_record_permissions(driver)
+
             blocks = driver.find_elements(By.CSS_SELECTOR, "div[role='listitem']")
 
             missing: List[MissingInfo] = []
@@ -1515,7 +1831,11 @@ def apply_google_form(
                 if input_type == "dropdown" and not options:
                     options = _peek_dropdown_options(block, wait, driver)
 
-                value = resolve_answer(label, normalized_profile, extra_answers, options=options)
+                # Auto-handle consent checkbox used by Google Forms to record email.
+                if input_type == "checkbox" and _is_email_record_checkbox(label, options):
+                    value = "yes"
+                else:
+                    value = resolve_answer(label, normalized_profile, extra_answers, options=options)
 
                 # Special case: file upload can use resume_path
                 if input_type == "file" and not value:

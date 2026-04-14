@@ -20,6 +20,7 @@ from .google_form_apply import (
     _is_required,
     _make_driver,
     _make_stealth_driver,
+    _auto_check_email_record_permissions,
     _peek_dropdown_options,
     is_google_form_url,
     resolve_final_url,
@@ -63,6 +64,61 @@ def _norm_text(s: str) -> str:
     return re.sub(r"\s+", " ", (s or "").strip().lower())
 
 
+def _is_dropdown_placeholder_option(text: str) -> bool:
+    t = _norm_text(text)
+    if not t:
+        return True
+
+    # English placeholder variants
+    if t in {"choose", "choose an option", "select", "select an option", "option", "--"}:
+        return True
+
+    # Bengali placeholder variants
+    if "বাছুন" in t or "নির্বাচন করুন" in t:
+        return True
+
+    # Placeholder variants wrapped with helper hints, e.g. "Choose (select)"
+    cleaned = re.sub(r"\(.*?\)", "", t).strip()
+    if cleaned in {"choose", "select", "choose option", "select option"}:
+        return True
+
+    return False
+
+
+def _normalize_options(options: Optional[List[str]], *, input_type: str = "") -> List[str]:
+    if not options:
+        return []
+
+    out: List[str] = []
+    seen = set()
+    for raw in options:
+        parts = [p.strip() for p in re.split(r"[\r\n]+", str(raw or "")) if p.strip()]
+        if not parts and str(raw or "").strip():
+            parts = [str(raw).strip()]
+        for part in parts:
+            if (input_type or "").lower() == "dropdown" and _is_dropdown_placeholder_option(part):
+                continue
+            key = _norm_text(part)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            out.append(part)
+    return out
+
+
+def _is_email_record_checkbox_question(q: QuestionRef) -> bool:
+    if not q or (q.input_type or "").lower() != "checkbox":
+        return False
+    text = _norm_text(" ".join([q.label or "", *[str(o or "") for o in (q.options or [])]]))
+    if "record my email" in text or "record email" in text:
+        return True
+    if "email" in text and any(k in text for k in ("record", "save", "store", "keep")):
+        return True
+    if "ইমেইল" in text and any(k in text for k in ("রেকর্ড", "সংরক্ষণ", "সেভ", "রাখ")):
+        return True
+    return False
+
+
 def _scan_questions(driver, wait: Optional[WebDriverWait] = None) -> List[QuestionRef]:
     blocks = driver.find_elements(By.CSS_SELECTOR, "div[role='listitem']")
 
@@ -82,6 +138,8 @@ def _scan_questions(driver, wait: Optional[WebDriverWait] = None) -> List[Questi
 
         if input_type == "dropdown" and not options and wait is not None:
             options = _peek_dropdown_options(block, wait, driver)
+
+        options = _normalize_options(options, input_type=input_type)
 
         # Some forms render each checkbox/radio option as a separate listitem.
         # If the block lacks a heading and the "label" equals a single option,
@@ -354,6 +412,7 @@ def load_form_after_login(driver, wait, apply_url: str, *, timeout_s: int = 25):
         WebDriverWait(driver, timeout_s).until(
             EC.presence_of_element_located((By.CSS_SELECTOR, "div[role='listitem']"))
         )
+        _auto_check_email_record_permissions(driver)
         questions = _scan_questions(driver, wait)
         if not questions:
             return {"ok": False, "error": "no_questions",
@@ -405,6 +464,8 @@ def start_interactive_session(apply_url: str, *, headless: bool = True, timeout_
 
     wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div[role='listitem']")))
 
+    _auto_check_email_record_permissions(driver)
+
     questions = _scan_questions(driver, wait)
     if not questions:
         driver.quit()
@@ -423,20 +484,14 @@ def next_prompt(questions: List[QuestionRef], index: int) -> Tuple[Optional[Ques
         msg += " (required)"
     # If there are explicit options (radio/checkbox/dropdown), show them as a numbered list
     if q.options:
-        # Flatten any option strings that contain embedded newlines — this happens
-        # when a dropdown container's .text bundles all labels into one string.
-        flat_opts: List[str] = []
-        for o in q.options:
-            if "\n" in o:
-                flat_opts.extend([p.strip() for p in o.split("\n") if p.strip()])
-            elif o.strip():
-                flat_opts.append(o.strip())
-        opts = flat_opts if flat_opts else q.options
+        opts = _normalize_options(q.options, input_type=q.input_type)
         opt_lines = []
         for i, o in enumerate(opts, start=1):
             opt_lines.append(f"{i}. {o}")
         msg += "\nOptions:\n" + "\n".join(opt_lines)
-        if q.input_type == "checkbox":
+        if _is_email_record_checkbox_question(q):
+            msg += "\n\nReply yes to check this box, or no to leave it unchecked."
+        elif q.input_type == "checkbox":
             msg += ("\n\nSelect one or more options by number or text, separated by commas or semicolons. "
                      "(e.g. 1,3 or Option A; Option B)")
         else:

@@ -169,14 +169,15 @@ const JobAgent = () => {
     const label = (q.label || "").trim() || "(Untitled question)";
     const required = Boolean(q.required);
     const typeLine = `Type: ${describeQuestionType(q.input_type)}`;
-    const options = Array.isArray(q.options)
-      ? q.options.map((o) => String(o || "").trim()).filter(Boolean)
-      : [];
+    const options = normalizeOptions(q.options, q.input_type);
+    const isEmailRecordCheckbox = isEmailRecordCheckboxQuestion(q);
 
     let msg = `${label}${required ? " (required)" : ""}\n${typeLine}`;
     if (options.length > 0) {
       msg += `\nOptions:\n${options.slice(0, 50).map((o, i) => `${i + 1}. ${o}`).join("\n")}`;
-      if ((q.input_type || "").toLowerCase() === "checkbox") {
+      if (isEmailRecordCheckbox) {
+        msg += "\n\nReply with yes to check this box, or no to leave it unchecked.";
+      } else if ((q.input_type || "").toLowerCase() === "checkbox") {
         msg ;
       } else {
         msg += "\n\nReply with the option number (e.g. 1) or the option text.";
@@ -186,6 +187,57 @@ const JobAgent = () => {
       msg += "\nReply with 1 to upload cv.pdf from your Downloads folder automatically.";
     }
     return msg;
+  };
+
+  const isDropdownPlaceholderOption = (value) => {
+    const t = String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+    if (!t) return true;
+    if (["choose", "choose an option", "select", "select an option", "option", "--"].includes(t)) return true;
+    if (t.includes("বাছুন") || t.includes("নির্বাচন করুন")) return true;
+    const cleaned = t.replace(/\(.*?\)/g, "").trim();
+    if (["choose", "select", "choose option", "select option"].includes(cleaned)) return true;
+    return false;
+  };
+
+  const normalizeOptions = (rawOptions, inputType = "") => {
+    if (!Array.isArray(rawOptions)) return [];
+
+    const out = [];
+    const seen = new Set();
+    const isDropdown = String(inputType || "").toLowerCase() === "dropdown";
+
+    rawOptions.forEach((raw) => {
+      const parts = String(raw || "")
+        .split(/[\r\n]+/)
+        .map((p) => p.trim())
+        .filter(Boolean);
+
+      parts.forEach((part) => {
+        if (isDropdown && isDropdownPlaceholderOption(part)) return;
+        const key = part.toLowerCase();
+        if (!key || seen.has(key)) return;
+        seen.add(key);
+        out.push(part);
+      });
+    });
+
+    return out;
+  };
+
+  const isEmailRecordCheckboxQuestion = (question) => {
+    if (!question) return false;
+    if (String(question.input_type || "").toLowerCase() !== "checkbox") return false;
+
+    const options = normalizeOptions(question.options, question.input_type);
+    const text = `${String(question.label || "")} ${options.join(" ")}`
+      .toLowerCase()
+      .replace(/\s+/g, " ")
+      .trim();
+
+    if (text.includes("record my email") || text.includes("record email")) return true;
+    if (text.includes("email") && ["record", "save", "store", "keep"].some((k) => text.includes(k))) return true;
+    if (text.includes("ইমেইল") && ["রেকর্ড", "সংরক্ষণ", "সেভ", "রাখ"].some((k) => text.includes(k))) return true;
+    return false;
   };
 
   const normalizeOption = (value) => String(value || "").trim().toLowerCase();
@@ -554,7 +606,8 @@ const JobAgent = () => {
 
         const inputType = (first?.input_type || "").toLowerCase();
         let answerValue = userQuery;
-        const options = Array.isArray(first?.options) ? first.options : [];
+        const options = normalizeOptions(first?.options, first?.input_type);
+        const emailRecordCheckbox = isEmailRecordCheckboxQuestion(first);
 
         const sendInvalidPrompt = () => {
           const prompt = buildNeedsInfoPrompt(missing);
@@ -565,12 +618,25 @@ const JobAgent = () => {
 
         if (options.length > 0 && ["radio", "dropdown", "checkbox"].includes(inputType)) {
           if (inputType === "checkbox") {
-            const { selected, invalidTokens } = resolveMultiOptions(options, userQuery);
-            if (invalidTokens.length > 0 || selected.length === 0) {
-              sendInvalidPrompt();
-              return;
+            if (emailRecordCheckbox) {
+              const normalized = String(userQuery || "").trim().toLowerCase();
+              if (["yes", "y", "true", "1", "check", "checked"].includes(normalized)) {
+                answerValue = options.length > 0 ? [options[0]] : ["yes"];
+              } else if (["no", "n", "false", "0", "skip", "leave unchecked"].includes(normalized)) {
+                answerValue = "__skip_checkbox__";
+              } else {
+                setMessages((prev) => [...prev, { sender: "ai", text: "Please reply with yes or no for this checkbox." }]);
+                setIsTyping(false);
+                return;
+              }
+            } else {
+              const { selected, invalidTokens } = resolveMultiOptions(options, userQuery);
+              if (invalidTokens.length > 0 || selected.length === 0) {
+                sendInvalidPrompt();
+                return;
+              }
+              answerValue = selected;
             }
-            answerValue = selected;
           } else {
             const resolved = resolveSingleOption(options, userQuery);
             if (!resolved) {
@@ -584,7 +650,9 @@ const JobAgent = () => {
         // If it's a checkbox (multi-select), allow users to type: "1, 3" or "Option A; Option B".
         if (inputType === "checkbox") {
           // Backend will join arrays; keep as array to preserve multi-select intent.
-          if (!Array.isArray(answerValue)) {
+          if (emailRecordCheckbox && typeof answerValue === "string") {
+            // __skip_checkbox__ is an intentional no-selection signal.
+          } else if (!Array.isArray(answerValue)) {
             const { selected } = resolveMultiOptions(options, userQuery);
             answerValue = selected.length > 0 ? selected : userQuery;
           }
