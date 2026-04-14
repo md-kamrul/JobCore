@@ -1,0 +1,180 @@
+-- ============================================================
+--  FILE: supabase/01_schema.sql
+--  HOW TO USE:
+--    1. Open your Supabase project
+--    2. Go to SQL Editor (left sidebar)
+--    3. Click "New Query"
+--    4. Paste this entire file and click "Run"
+-- ============================================================
+
+
+-- ─── STEP 0: Enable UUID generation ───────────────────────
+-- Supabase needs this to auto-generate unique IDs for rows.
+
+create extension if not exists "uuid-ossp";
+
+
+-- ─── TABLE 1: profiles ────────────────────────────────────
+-- One row per user. The `id` column is linked directly to
+-- Supabase Auth (auth.users), so every authenticated user
+-- gets exactly one profile row.
+
+create table public.profiles (
+  id            uuid references auth.users(id) on delete cascade primary key,
+  full_name     text,
+  email         text,
+  bio           text,
+  desired_role  text,
+  phone         text,
+  website       text,
+  linkedin      text,
+  avatar_url    text,
+
+  -- CV file metadata (the actual file lives in Supabase Storage)
+  cv_name        text,
+  cv_size        bigint,
+  cv_type        text,
+  cv_uploaded_at timestamptz,
+  cv_note        text,
+
+  created_at    timestamptz default now(),
+  updated_at    timestamptz default now()
+);
+
+
+-- ─── TABLE 2: work_experience ─────────────────────────────
+-- Each user can have multiple work experience entries.
+-- `profile_id` links back to the profiles table.
+-- If the profile is deleted, all their work entries are
+-- automatically deleted too (on delete cascade).
+
+create table public.work_experience (
+  id          uuid default uuid_generate_v4() primary key,
+  profile_id  uuid references public.profiles(id) on delete cascade not null,
+  role        text,
+  company     text,
+  period      text,
+  description text,
+  color       text default '#3b82f6',
+  sort_order  integer default 0,
+  created_at  timestamptz default now()
+);
+
+
+-- ─── TABLE 3: education ───────────────────────────────────
+-- Same pattern as work_experience — multiple rows per user.
+
+create table public.education (
+  id          uuid default uuid_generate_v4() primary key,
+  profile_id  uuid references public.profiles(id) on delete cascade not null,
+  degree      text,
+  school      text,
+  period      text,
+  gpa         text,
+  color       text default '#f59e0b',
+  sort_order  integer default 0,
+  created_at  timestamptz default now()
+);
+
+
+-- ─── AUTO-UPDATE updated_at ───────────────────────────────
+-- Whenever a profile row is updated, this function
+-- automatically sets updated_at to the current time.
+-- You never need to set it manually in your frontend code.
+
+create or replace function update_updated_at()
+returns trigger as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$ language plpgsql;
+
+create trigger profiles_updated_at
+  before update on public.profiles
+  for each row execute function update_updated_at();
+
+
+-- ─── AUTO-CREATE PROFILE ON SIGNUP ───────────────────────
+-- This is the most important part for your signup flow.
+-- When a user signs up via Supabase Auth (in Signup.jsx),
+-- this trigger fires automatically and creates a profile row
+-- using the full_name and email they submitted.
+-- You do NOT need to call any extra code in your frontend.
+
+create or replace function public.handle_new_user()
+returns trigger as $$
+begin
+  insert into public.profiles (id, full_name, email)
+  values (
+    new.id,                                   -- auth user's UUID
+    new.raw_user_meta_data->>'full_name',     -- from signUp({ data: { full_name } })
+    new.email                                 -- from signUp email field
+  );
+  return new;
+end;
+$$ language plpgsql security definer;
+
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute function public.handle_new_user();
+
+
+-- ─── ROW LEVEL SECURITY (RLS) ────────────────────────────
+-- RLS means users can ONLY read and write their OWN data.
+-- Without this, any logged-in user could read everyone's profiles.
+-- These must be enabled + policies must be created.
+
+alter table public.profiles        enable row level security;
+alter table public.work_experience enable row level security;
+alter table public.education       enable row level security;
+
+
+-- profiles policies
+create policy "Users can view own profile"
+  on public.profiles for select
+  using (auth.uid() = id);
+
+create policy "Users can insert own profile"
+  on public.profiles for insert
+  with check (auth.uid() = id);
+
+create policy "Users can update own profile"
+  on public.profiles for update
+  using (auth.uid() = id);
+
+
+-- work_experience policies
+create policy "Users can view own work experience"
+  on public.work_experience for select
+  using (auth.uid() = (select id from public.profiles where id = profile_id));
+
+create policy "Users can insert own work experience"
+  on public.work_experience for insert
+  with check (auth.uid() = (select id from public.profiles where id = profile_id));
+
+create policy "Users can update own work experience"
+  on public.work_experience for update
+  using (auth.uid() = (select id from public.profiles where id = profile_id));
+
+create policy "Users can delete own work experience"
+  on public.work_experience for delete
+  using (auth.uid() = (select id from public.profiles where id = profile_id));
+
+
+-- education policies
+create policy "Users can view own education"
+  on public.education for select
+  using (auth.uid() = (select id from public.profiles where id = profile_id));
+
+create policy "Users can insert own education"
+  on public.education for insert
+  with check (auth.uid() = (select id from public.profiles where id = profile_id));
+
+create policy "Users can update own education"
+  on public.education for update
+  using (auth.uid() = (select id from public.profiles where id = profile_id));
+
+create policy "Users can delete own education"
+  on public.education for delete
+  using (auth.uid() = (select id from public.profiles where id = profile_id));
