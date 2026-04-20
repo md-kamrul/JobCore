@@ -41,7 +41,9 @@ Path: mockInterview
 
 Purpose:
 - Generate interview questions by role/level
+- Run a multi-question text-based interview flow
 - Evaluate candidate answers and provide feedback
+- Return session summaries and per-question breakdowns
 
 Runtime:
 - FastAPI
@@ -53,7 +55,9 @@ Runtime:
 Frontend
   |- /job-agent       -> jobFinderAgent API (5001)
   |- /resume-checker  -> resumeChecker API (5004)
-  |- /mock-interview  -> currently Vapi voice demo link (API available at 5002)
+  |- /mock-interview  -> text interview selector page
+  |- /mock-interview/text -> text interview flow backed by mockInterview API (5002)
+  |- voice option    -> external Vapi demo link
 
 jobFinderAgent
   |- /api/chat
@@ -94,6 +98,7 @@ cd mockInterview
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+pip install requests
 uvicorn main:app --host 0.0.0.0 --port 5002 --reload
 ```
 
@@ -119,6 +124,7 @@ OPENAI_API_KEY=
 
 ```env
 OPENAI_API_KEY=
+MODEL_API_URL=http://localhost:5000
 PORT=5002
 ```
 
@@ -132,4 +138,4 @@ PORT=5002
 
 - Google Form automation requires local Google Chrome.
 - Resume checker expects PDF upload from frontend.
-- The mock interview backend is available as API, while the current frontend page primarily links to an external voice interview demo.
+- The mock interview backend now powers the frontend text interview flow; the Voice option still opens the external Vapi demo.

@@ -12,7 +12,7 @@ This folder contains the production code for JobCore.
 1. Start backend services needed for your workflow:
    - Job Agent (5001)
    - Resume Checker (5004)
-   - Mock Interview (5002, optional for API testing)
+   - Mock Interview (5002, required for the text interview page)
 2. Start frontend Vite app (5173)
 3. Open browser and use feature pages.
 

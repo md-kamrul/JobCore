@@ -8,6 +8,7 @@ React + Vite frontend for JobCore.
 - Protected routes for main AI features
 - Job Agent chat interface and Google Form apply flow UI
 - ATS Resume Checker page with upload and result tabs
+- Mock interview selector with text-based interview flow and external voice demo link
 - Profile page with:
 	- Avatar upload
 	- CV upload/download
@@ -53,6 +54,7 @@ Create .env.local in this folder:
 ```env
 VITE_SUPABASE_URL=
 VITE_SUPABASE_ANON_KEY=
+VITE_MOCK_INTERVIEW_API_URL=http://localhost:5002
 
 # Optional Firebase keys
 VITE_apiKey=
@@ -69,7 +71,7 @@ This frontend expects these backend services to be running:
 
 - Job Agent API: http://localhost:5001
 - Resume Checker API: http://localhost:5004
-- Mock Interview API: http://localhost:5002 (available backend, not fully wired in current page)
+- Mock Interview API: http://localhost:5002 (powers the text-based mock interview flow)
 
 ## Route Map
 
@@ -81,6 +83,7 @@ This frontend expects these backend services to be running:
 - /job-agent -> Protected Job Agent page
 - /resume-checker -> Protected Resume Checker page
 - /mock-interview -> Protected mock interview page
+- /mock-interview/text -> Protected text-based mock interview page
 
 ## Key Integration Points
 
@@ -107,7 +110,7 @@ Expected profile-related fields include:
 
 ## Notes
 
-- Mock Interview page currently links to an external voice interview demo and shows text mode as coming soon.
+- Mock Interview now offers two paths: the Text option opens the built-in text interview flow, and the Voice option still opens the external Vapi demo.
 - Some pages are placeholders for future modules (for example, cover letter generator and tracker links in dashboard).
 
 ## Troubleshooting
