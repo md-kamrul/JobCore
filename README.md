@@ -57,6 +57,8 @@ Data Layer
 	|- avatars/cvs storage buckets
 ```
 
+![Mock Interview System Architecture](Project/Frontend/public/jobcore_updated.svg)
+
 ## Prerequisites
 
 - Node.js 18+
