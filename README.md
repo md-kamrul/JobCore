@@ -41,7 +41,9 @@ JobCore/
 Frontend (Vite/React)
 	|- /job-agent       -> calls JobFinder API (5001)
 	|- /resume-checker  -> calls ResumeChecker API (5004)
-	|- /mock-interview  -> currently voice demo link (Vapi)
+	|- /mock-interview  -> text interview selector page
+	|- /mock-interview/text -> text interview flow backed by mock interview API (5002)
+	|- voice option     -> external Vapi demo link
 	|- /profile         -> reads/writes Supabase tables + storage
 
 Backend Services
@@ -105,17 +107,19 @@ python app.py
 
 Resume Checker API URL: http://localhost:5004
 
-### 4) Mock Interview Backend (optional in current UI)
+### 4) Mock Interview Backend (required for the text interview flow)
 
 ```bash
 cd Project/Backend/mockInterview
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+pip install requests
 uvicorn main:app --host 0.0.0.0 --port 5002 --reload
 ```
 
 Mock Interview API URL: http://localhost:5002
+This backend powers the text interview flow in the frontend mock interview page.
 
 ## Environment Variables
 
@@ -193,6 +197,10 @@ PORT=5002
 
 - GET /
 - GET /health
+- GET /options
+- POST /api/interview/start
+- POST /api/interview/answer
+- GET /api/interview/summary/{session_id}
 - POST /api/interview/question
 - POST /api/interview/evaluate
 
