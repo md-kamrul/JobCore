@@ -9,6 +9,7 @@ import Signup from "../pages/Signup";
 import Profile from "../pages/Profile";
 import JobAgent from "../pages/JobAgent";
 import MockInterview from "../pages/MockInterview";
+import TextMockInterview from "../components/TextMockInterview";
 import ResumeChecker from "../pages/ResumeChecker";
 import ProtectedRoute from "./ProtectedRoute";
 
@@ -35,6 +36,14 @@ export const router = createBrowserRouter([
           element: (
             <ProtectedRoute>
               <MockInterview></MockInterview>
+            </ProtectedRoute>
+          ),
+        },
+        {
+          path: "/mock-interview/text",
+          element: (
+            <ProtectedRoute>
+              <TextMockInterview></TextMockInterview>
             </ProtectedRoute>
           ),
         },
