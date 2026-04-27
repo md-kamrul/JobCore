@@ -22,6 +22,7 @@ from jobApplyAgent.google_form_apply import (
     is_google_form_url,
     resolve_final_url,
     _auto_check_email_record_permissions,
+    _peek_dropdown_options,
 )
 from jobApplyAgent.interactive_google_form import (
     answer_current_and_advance,
@@ -31,6 +32,7 @@ from jobApplyAgent.interactive_google_form import (
     resume_upload_agent,
     start_gmail_login_session,
     start_interactive_session,
+    _find_question_block,
 )
 from jobApplyAgent.profile_resolver import normalize_profile, resolve_answer
 from jobApplyAgent.state import create_session, delete_session, get_session, update_session_answers
@@ -158,6 +160,43 @@ def _build_missing_payload(session, *, question, prompt):
     }
 
 
+def _build_options_block(question) -> str:
+    if not question:
+        return ""
+    options = _normalize_options(question.options, input_type=question.input_type)
+    if not options:
+        return ""
+
+    opt_lines = [f"{i}. {o}" for i, o in enumerate(options, start=1)]
+    msg = "Options:\n" + "\n".join(opt_lines)
+    if _is_email_record_checkbox(question):
+        msg += "\n\nReply yes to check this box, or no to leave it unchecked."
+    elif str(getattr(question, "input_type", "") or "").lower() == "checkbox":
+        msg += ("\n\nSelect one or more options by number or text, separated by commas or semicolons. "
+                "(e.g. 1,3 or Option A; Option B)")
+    else:
+        msg += "\n\nReply with the option number (e.g. 1) or the option text."
+    return msg
+
+
+def _refresh_dropdown_options(session, question) -> None:
+    if not session or not question:
+        return
+    if str(getattr(question, "input_type", "") or "").lower() != "dropdown":
+        return
+    if not session.driver or not session.wait:
+        return
+
+    try:
+        block = _find_question_block(session.driver, question)
+        dropdown_options = _peek_dropdown_options(block, session.wait, session.driver)
+        if dropdown_options:
+            merged = _normalize_options((question.options or []) + dropdown_options, input_type=question.input_type)
+            question.options = merged
+    except Exception:
+        return
+
+
 def _build_confirm_payload(session, *, question, prompt, suggested_answer: str):
     missing = []
     if question:
@@ -170,10 +209,17 @@ def _build_confirm_payload(session, *, question, prompt, suggested_answer: str):
         }]
     msg = prompt or ""
     if suggested_answer:
+        hint = "I found a possible answer in your profile."
+        if question and str(getattr(question, "input_type", "") or "").lower() == "dropdown":
+            hint = f"I found a possible answer in your profile: {suggested_answer}"
         msg = (
-            f"{msg}\n\nI found a possible answer in your profile."
+            f"{msg}\n\n{hint}"
             "\nConfirm to use it or click Edit to provide a different answer."
         ).strip()
+
+    options_block = _build_options_block(question)
+    if options_block and not re.search(r"\bOptions\b\s*:", msg, re.IGNORECASE):
+        msg = f"{msg}\n{options_block}".strip()
     return {
         'success': True,
         'status': 'needs_confirm',
@@ -208,7 +254,7 @@ def _auto_answer_or_prompt(session):
     while auto_guard < 8:
         auto_guard += 1
 
-        current_q, prompt = next_prompt(session.questions, session.index)
+        current_q, prompt = next_prompt(session.questions, session.index, driver=session.driver, wait=session.wait)
         if not current_q:
             delete_session(session.application_id)
             return {
@@ -221,6 +267,7 @@ def _auto_answer_or_prompt(session):
         if (current_q.input_type or '').lower() == 'file':
             return _build_missing_payload(session, question=current_q, prompt=prompt)
 
+        _refresh_dropdown_options(session, current_q)
         current_q.options = _normalize_options(current_q.options, input_type=current_q.input_type)
 
         if _is_email_record_checkbox(current_q):
@@ -229,6 +276,10 @@ def _auto_answer_or_prompt(session):
             continue
 
         auto_answer = resolve_answer(current_q.label, profile, session.answers, options=current_q.options)
+
+        # For dropdowns, always show question + options and wait for the user's reply.
+        if (current_q.input_type or '').lower() == 'dropdown':
+            return _build_missing_payload(session, question=current_q, prompt=prompt)
 
         if auto_answer:
             return _build_confirm_payload(
@@ -517,7 +568,7 @@ def continue_apply():
             })
 
         # Determine the current question label and grab the user answer
-        current_q, _ = next_prompt(session.questions, session.index)
+        current_q, _ = next_prompt(session.questions, session.index, driver=session.driver, wait=session.wait)
         if not current_q:
             delete_session(application_id)
             return jsonify({
@@ -526,6 +577,8 @@ def continue_apply():
                 'message': '⚠️ No pending question found. Please click Apply again.',
                 'applyUrl': session.apply_url,
             })
+
+        _refresh_dropdown_options(session, current_q)
 
         user_answer_raw = answers.get(current_q.label)
         if user_answer_raw is None:
@@ -539,7 +592,7 @@ def continue_apply():
             user_answer = str(user_answer_raw or "").strip()
         if not user_answer:
             # re-ask
-            _, prompt = next_prompt(session.questions, session.index)
+            _, prompt = next_prompt(session.questions, session.index, driver=session.driver, wait=session.wait)
             return jsonify({
                 'success': True,
                 'status': 'needs_info',
@@ -697,9 +750,9 @@ if __name__ == '__main__':
     import os
     
     # Check API key
-    if not os.getenv("NEBIUS_API_KEY"):
-        logger.error("NEBIUS_API_KEY not found in .env file")
-        print("❌ ERROR: NEBIUS_API_KEY not found in .env file")
+    if not os.getenv("OPENAI_API_KEY"):
+        logger.error("OPENAI_API_KEY not found in .env file")
+        print("❌ ERROR: OPENAI_API_KEY not found in .env file")
         exit(1)
     
     logger.info("✅ API Key loaded successfully")

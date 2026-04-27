@@ -203,6 +203,22 @@ const JobAgent = () => {
     return msg;
   };
 
+  const buildOptionsSnippet = (question) => {
+    if (!question) return "";
+    const options = normalizeOptions(question.options, question.input_type);
+    if (options.length === 0) return "";
+
+    let msg = `Options:\n${options.slice(0, 50).map((o, i) => `${i + 1}. ${o}`).join("\n")}`;
+    if (isEmailRecordCheckboxQuestion(question)) {
+      msg += "\n\nReply with yes to check this box, or no to leave it unchecked.";
+    } else if ((question.input_type || "").toLowerCase() === "checkbox") {
+      msg += "\n\nUse the checkboxes below to select all that apply, then click Confirm.";
+    } else {
+      msg += "\n\nReply with the option number (e.g. 1) or the option text.";
+    }
+    return msg;
+  };
+
   const isDropdownPlaceholderOption = (value) => {
     const t = String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
     if (!t) return true;
@@ -403,9 +419,14 @@ const JobAgent = () => {
 
     if (applyData?.status === "needs_confirm") {
       const prompt = applyData?.message || buildNeedsInfoPrompt(missing);
+      const optionsSnippet = buildOptionsSnippet(firstQ);
+      const fullPrompt =
+        optionsSnippet && !/\bOptions\b:/i.test(prompt)
+          ? (prompt ? `${prompt}\n${optionsSnippet}` : optionsSnippet)
+          : prompt;
       setMessages((prev) => [...prev, {
         sender: "ai",
-        text: prompt,
+        text: fullPrompt,
         confirmQuestion: firstQ,
         suggestedAnswer: applyData?.suggestedAnswer,
         applicationId: applyData.applicationId,
