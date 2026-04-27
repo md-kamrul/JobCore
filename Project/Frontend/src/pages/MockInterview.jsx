@@ -2,8 +2,6 @@ import React from "react";
 import { useNavigate } from "react-router-dom";
 import { FaKeyboard, FaMicrophone } from "react-icons/fa";
 
-const VAPI_LINK = "https://vapi.ai?demo=true&shareKey=bb3ea19b-a496-45e1-9458-4522adbcaec5&assistantId=882fdf3c-f3be-454e-b579-d322ce19d825";
-
 function InterviewModeCard({ title, subtitle, icon, iconClassName, onClick }) {
   return (
     <button
@@ -23,7 +21,7 @@ export default function App() {
   const navigate = useNavigate();
 
   const handleVoice = () => {
-    window.open(VAPI_LINK, "_blank", "noopener,noreferrer");
+    navigate("/mock-interview/voice");
   };
 
   const handleText = () => {
