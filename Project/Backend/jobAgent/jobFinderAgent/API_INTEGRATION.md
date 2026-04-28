@@ -149,7 +149,7 @@ Query string:
 
 ## Expected Service Dependencies
 
-- NEBIUS_API_KEY
+- OPENAI_API_KEY
 - SERPAPI_API_KEY
 - local Chrome installation for Google Form automation
 

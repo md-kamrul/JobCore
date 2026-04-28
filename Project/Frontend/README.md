@@ -55,6 +55,8 @@ Create .env.local in this folder:
 VITE_SUPABASE_URL=
 VITE_SUPABASE_ANON_KEY=
 VITE_MOCK_INTERVIEW_API_URL=http://localhost:5002
+VITE_VAPI_PUBLIC_KEY=
+VITE_VAPI_ASSISTANT_ID=
 
 # Optional Firebase keys
 VITE_apiKey=
@@ -84,6 +86,8 @@ This frontend expects these backend services to be running:
 - /resume-checker -> Protected Resume Checker page
 - /mock-interview -> Protected mock interview page
 - /mock-interview/text -> Protected text-based mock interview page
+- /mock-interview/voice -> Protected voice-based mock interview page
+- Mock Interview now offers two paths: the Text option opens the built-in text interview flow, and the Voice option opens the in-app Vapi assistant.
 
 ## Key Integration Points
 

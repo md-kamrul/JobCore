@@ -6,7 +6,7 @@ import { getProfile, getWorkExperience, getEducation, getCVSignedUrl } from "../
 
 // ─── CheckboxPrompt ──────────────────────────────────────────────────────────
 // Renders an inline multi-select UI when the form question is a checkbox type.
-const CheckboxPrompt = ({ question, onSubmit }) => {
+const CheckboxPrompt = ({ question, options = [], onSubmit }) => {
   const [selected, setSelected] = useState([]);
 
   const toggle = (opt) => {
@@ -21,12 +21,26 @@ const CheckboxPrompt = ({ question, onSubmit }) => {
   };
 
   return (
-    <div className="mt-2 space-y-2">
+    <div className="mt-3 space-y-2">
+      {options.map((opt, i) => (
+        <label
+          key={i}
+          className="flex items-center gap-2 cursor-pointer text-sm text-gray-200 hover:text-white select-none"
+        >
+          <input
+            type="checkbox"
+            checked={selected.includes(opt)}
+            onChange={() => toggle(opt)}
+            className="w-4 h-4 accent-blue-500 rounded"
+          />
+          <span>{opt}</span>
+        </label>
+      ))}
       {selected.length > 0 && (
         <button
           type="button"
           onClick={handleConfirm}
-          className="mt-2 px-4 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-semibold transition"
+          className="mt-3 px-4 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-semibold transition"
         >
           ✅ Confirm ({selected.length} selected)
         </button>
@@ -178,13 +192,29 @@ const JobAgent = () => {
       if (isEmailRecordCheckbox) {
         msg += "\n\nReply with yes to check this box, or no to leave it unchecked.";
       } else if ((q.input_type || "").toLowerCase() === "checkbox") {
-        msg ;
+        msg += "\n\nUse the checkboxes below to select all that apply, then click Confirm.";
       } else {
         msg += "\n\nReply with the option number (e.g. 1) or the option text.";
       }
     }
     if ((q.input_type || "").toLowerCase() === "file") {
       msg += "\nReply with 1 to upload cv.pdf from your Downloads folder automatically.";
+    }
+    return msg;
+  };
+
+  const buildOptionsSnippet = (question) => {
+    if (!question) return "";
+    const options = normalizeOptions(question.options, question.input_type);
+    if (options.length === 0) return "";
+
+    let msg = `Options:\n${options.slice(0, 50).map((o, i) => `${i + 1}. ${o}`).join("\n")}`;
+    if (isEmailRecordCheckboxQuestion(question)) {
+      msg += "\n\nReply with yes to check this box, or no to leave it unchecked.";
+    } else if ((question.input_type || "").toLowerCase() === "checkbox") {
+      msg += "\n\nUse the checkboxes below to select all that apply, then click Confirm.";
+    } else {
+      msg += "\n\nReply with the option number (e.g. 1) or the option text.";
     }
     return msg;
   };
@@ -389,9 +419,14 @@ const JobAgent = () => {
 
     if (applyData?.status === "needs_confirm") {
       const prompt = applyData?.message || buildNeedsInfoPrompt(missing);
+      const optionsSnippet = buildOptionsSnippet(firstQ);
+      const fullPrompt =
+        optionsSnippet && !/\bOptions\b:/i.test(prompt)
+          ? (prompt ? `${prompt}\n${optionsSnippet}` : optionsSnippet)
+          : prompt;
       setMessages((prev) => [...prev, {
         sender: "ai",
-        text: prompt,
+        text: fullPrompt,
         confirmQuestion: firstQ,
         suggestedAnswer: applyData?.suggestedAnswer,
         applicationId: applyData.applicationId,
@@ -810,6 +845,7 @@ const JobAgent = () => {
                   pendingApplication?.applicationId === msg.applicationId && (
                     <CheckboxPrompt
                       question={msg.checkboxQuestion}
+                      options={normalizeOptions(msg.checkboxQuestion.options, msg.checkboxQuestion.input_type)}
                       onSubmit={handleCheckboxConfirm}
                     />
                   )}

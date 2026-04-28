@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 # Client will be initialized lazily
 _client = None
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
 
 SEARCH_ACTION_TERMS = {
@@ -87,8 +88,7 @@ def get_client():
     global _client
     if _client is None:
         _client = AsyncOpenAI(
-            base_url="https://api.tokenfactory.nebius.com/v1",
-            api_key=os.getenv("NEBIUS_API_KEY"),
+            api_key=os.getenv("OPENAI_API_KEY"),
         )
     return _client
 
@@ -126,7 +126,7 @@ Respond ONLY with a JSON object in this exact format:
     try:
         client = get_client()
         response = await client.chat.completions.create(
-            model="meta-llama/Llama-3.3-70B-Instruct-fast",
+            model=OPENAI_MODEL,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": f"Analyze this message: '{user_message}'"}
@@ -206,7 +206,7 @@ Remember: You are an AI assistant focused on helping people find their ideal job
         messages.append({"role": "user", "content": user_message})
         
         response = await client.chat.completions.create(
-            model="meta-llama/Llama-3.3-70B-Instruct-fast",
+            model=OPENAI_MODEL,
             messages=messages,
             temperature=0.7,
             max_tokens=300

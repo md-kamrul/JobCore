@@ -136,8 +136,10 @@ def _scan_questions(driver, wait: Optional[WebDriverWait] = None) -> List[Questi
         required = _is_required(block)
         input_type, options = _detect_input_type(block)
 
-        if input_type == "dropdown" and not options and wait is not None:
-            options = _peek_dropdown_options(block, wait, driver)
+        if input_type == "dropdown" and wait is not None:
+            dropdown_options = _peek_dropdown_options(block, wait, driver)
+            if dropdown_options:
+                options = _normalize_options((options or []) + dropdown_options, input_type=input_type)
 
         options = _normalize_options(options, input_type=input_type)
 
@@ -474,19 +476,41 @@ def start_interactive_session(apply_url: str, *, headless: bool = True, timeout_
     return {"ok": True, "driver": driver, "wait": wait, "finalUrl": final_url, "questions": questions, "index": 0}
 
 
-def next_prompt(questions: List[QuestionRef], index: int) -> Tuple[Optional[QuestionRef], str]:
+def next_prompt(
+    questions: List[QuestionRef],
+    index: int,
+    *,
+    driver=None,
+    wait: Optional[WebDriverWait] = None,
+) -> Tuple[Optional[QuestionRef], str]:
     if index >= len(questions):
         return None, ""
 
     q = questions[index]
+
+    if (q.input_type or "").lower() == "dropdown":
+        try:
+            if driver is not None and wait is not None:
+                block = _find_question_block(driver, q)
+                dropdown_options = _peek_dropdown_options(block, wait, driver)
+                if dropdown_options:
+                    q.options = _normalize_options((q.options or []) + dropdown_options, input_type=q.input_type)
+        except Exception:
+            pass
+
+    q.options = _normalize_options(q.options, input_type=q.input_type)
+
     msg = f"{q.label}"
     if q.required:
         msg += " (required)"
+
+    if (q.input_type or "").lower() == "dropdown":
+        msg += "\nType: Dropdown"
+
     # If there are explicit options (radio/checkbox/dropdown), show them as a numbered list
     if q.options:
-        opts = _normalize_options(q.options, input_type=q.input_type)
         opt_lines = []
-        for i, o in enumerate(opts, start=1):
+        for i, o in enumerate(q.options, start=1):
             opt_lines.append(f"{i}. {o}")
         msg += "\nOptions:\n" + "\n".join(opt_lines)
         if _is_email_record_checkbox_question(q):
@@ -496,6 +520,7 @@ def next_prompt(questions: List[QuestionRef], index: int) -> Tuple[Optional[Ques
                      "(e.g. 1,3 or Option A; Option B)")
         else:
             msg += "\n\nReply with the option number (e.g. 1) or the option text."
+
     if q.input_type == "file":
         msg += "\nType: File upload"
         msg += "\nReply with 1 to upload /Users/kamrul/Downloads/cv.pdf automatically."
@@ -575,7 +600,7 @@ def answer_current_and_advance(
         # killing the session.  Return needs_retry so the caller re-asks the
         # same question without advancing the index.
         if q.required:
-            _, prompt = next_prompt(questions, index)
+            _, prompt = next_prompt(questions, index, driver=driver, wait=wait)
             return {
                 "status": "needs_retry",
                 "index": index,
@@ -587,13 +612,13 @@ def answer_current_and_advance(
             "status": "needs_info",
             "index": index + 1,
             "question": questions[index + 1] if index + 1 < len(questions) else None,
-            "prompt": next_prompt(questions, index + 1)[1] if index + 1 < len(questions) else "",
+            "prompt": next_prompt(questions, index + 1, driver=driver, wait=wait)[1] if index + 1 < len(questions) else "",
         }
 
     # Move to next question on this page
     index += 1
     if index < len(questions):
-        nq, prompt = next_prompt(questions, index)
+        nq, prompt = next_prompt(questions, index, driver=driver, wait=wait)
         return {"status": "needs_info", "index": index, "question": nq, "prompt": prompt}
 
     # End of page questions: click Submit if present else Next
@@ -620,7 +645,7 @@ def answer_current_and_advance(
     if not new_questions:
         return {"status": "error", "message": "Could not find questions on the next page."}
 
-    nq, prompt = next_prompt(new_questions, 0)
+    nq, prompt = next_prompt(new_questions, 0, driver=driver, wait=wait)
     return {
         "status": "needs_info",
         "index": 0,

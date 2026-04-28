@@ -34,7 +34,7 @@ pip install -r requirements.txt
 Create .env in this folder.
 
 ```env
-NEBIUS_API_KEY=
+OPENAI_API_KEY=
 SERPAPI_API_KEY=
 
 # Optional for extended scraping/auth flows
@@ -44,7 +44,7 @@ OPENAI_API_KEY=
 
 Required in current implementation:
 
-- NEBIUS_API_KEY
+- OPENAI_API_KEY
 - SERPAPI_API_KEY
 
 ## Start Service
@@ -167,8 +167,8 @@ See API integration details in API_INTEGRATION.md.
 
 ## Troubleshooting
 
-- Missing NEBIUS_API_KEY:
-   - Add key in .env and restart server.
+- Missing OPENAI_API_KEY:
+   - Add your OpenAI key in .env and restart server.
 - Missing SERPAPI_API_KEY:
    - Add key in .env. Search job scraping depends on this.
 - Chrome automation fails:

@@ -16,7 +16,7 @@ fi
 # Check if .env exists
 if [ ! -f ".env" ]; then
     echo "❌ Error: .env file not found"
-    echo "Please create .env file with NEBIUS_API_KEY"
+    echo "Please create .env file with OPENAI_API_KEY"
     exit 1
 fi
 

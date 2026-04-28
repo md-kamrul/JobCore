@@ -14,6 +14,8 @@ from googleJobScraper import GoogleJobScraper
 
 logger = logging.getLogger(__name__)
 
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+
 
 DEMO_JOB_MARKDOWN = (
     "- **Title:** Junior MERN Stack Developer\n"
@@ -58,9 +60,8 @@ async def run_job_search(mcp_server, user_query: str, linkedin_profile_url: str 
             except Exception:
                 max_jobs = 5
 
-    api_key = os.environ["NEBIUS_API_KEY"]
-    base_url = "https://api.tokenfactory.nebius.com/v1" 
-    client = AsyncOpenAI(base_url=base_url, api_key=api_key)
+    api_key = os.environ["OPENAI_API_KEY"]
+    client = AsyncOpenAI(api_key=api_key)
     set_tracing_disabled(disabled=True)
 
     # Agent 1: Chat Understanding Agent
@@ -94,7 +95,7 @@ async def run_job_search(mcp_server, user_query: str, linkedin_profile_url: str 
         - If the query is vague, make reasonable assumptions based on context
         """,
         model=OpenAIChatCompletionsModel(
-            model="meta-llama/Llama-3.3-70B-Instruct",
+            model=OPENAI_MODEL,
             openai_client=client
         )
     )
@@ -125,7 +126,7 @@ async def run_job_search(mcp_server, user_query: str, linkedin_profile_url: str 
         NOTE: Do not attempt to access external URLs. Just acknowledge the profile URL if provided.
         """,
         model=OpenAIChatCompletionsModel(
-            model="meta-llama/Llama-3.3-70B-Instruct",
+            model=OPENAI_MODEL,
             openai_client=client
         )
     )
@@ -165,7 +166,7 @@ async def run_job_search(mcp_server, user_query: str, linkedin_profile_url: str 
         - Include remote/hybrid filters if mentioned
         """,
         model=OpenAIChatCompletionsModel(
-            model="meta-llama/Llama-3.3-70B-Instruct",
+            model=OPENAI_MODEL,
             openai_client=client
         )
     )
@@ -196,7 +197,7 @@ async def run_job_search(mcp_server, user_query: str, linkedin_profile_url: str 
         - Output ONLY valid JSON
         """,
         model=OpenAIChatCompletionsModel(
-            model="meta-llama/Llama-3.3-70B-Instruct",
+            model=OPENAI_MODEL,
             openai_client=client
         )
     )
@@ -223,7 +224,7 @@ async def run_job_search(mcp_server, user_query: str, linkedin_profile_url: str 
         - Use the exact format from the job generator
         """,
         model=OpenAIChatCompletionsModel(
-            model="meta-llama/Llama-3.3-70B-Instruct",
+            model=OPENAI_MODEL,
             openai_client=client
         )
     )
@@ -335,7 +336,7 @@ async def run_job_search(mcp_server, user_query: str, linkedin_profile_url: str 
 Missing required environment variable: {str(e)}
 
 Please make sure you have set up your `.env` file with:
-- NEBIUS_API_KEY
+- OPENAI_API_KEY
 - BRIGHT_DATA_API_KEY  
 - BROWSER_AUTH
 
